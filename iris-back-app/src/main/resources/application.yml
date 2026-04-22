@@ -1,0 +1,56 @@
+spring:
+  application:
+    name: iris-back
+  profiles:
+    active: local
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${IRIS_DB_HOST:localhost}:${IRIS_DB_PORT:3306}/${IRIS_DB_NAME:iris_back}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${IRIS_DB_USERNAME:root}
+    password: ${IRIS_DB_PASSWORD:root}
+  data:
+    redis:
+      host: ${IRIS_REDIS_HOST:localhost}
+      port: ${IRIS_REDIS_PORT:6379}
+      database: ${IRIS_REDIS_DB:0}
+      timeout: 3s
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  jackson:
+    time-zone: Asia/Shanghai
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: ${IRIS_SERVER_PORT:8080}
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: INFO
+    com.iris.back: INFO
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      id-type: assign_id
+
+iris:
+  app-version: 0.1.0-SNAPSHOT
+  deployment-mode: platform
+  security:
+    token-header: Authorization
+    token-prefix: Bearer

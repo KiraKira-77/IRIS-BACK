@@ -1,0 +1,7 @@
+logging:
+  level:
+    com.iris.back: DEBUG
+
+iris:
+  security:
+    session-ttl-hours: 12

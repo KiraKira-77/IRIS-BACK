@@ -1,0 +1,170 @@
+CREATE DATABASE IF NOT EXISTS iris_back
+  DEFAULT CHARACTER SET utf8mb4
+  DEFAULT COLLATE utf8mb4_unicode_ci;
+
+USE iris_back;
+
+CREATE TABLE IF NOT EXISTS sys_tenant (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  tenant_code VARCHAR(64) NOT NULL,
+  tenant_name VARCHAR(128) NOT NULL,
+  status TINYINT NOT NULL DEFAULT 1,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_tenant_code (tenant_code),
+  KEY idx_sys_tenant_status (status)
+);
+
+CREATE TABLE IF NOT EXISTS sys_org (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  parent_id BIGINT NULL,
+  org_code VARCHAR(64) NOT NULL,
+  org_name VARCHAR(128) NOT NULL,
+  org_level INT NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  status TINYINT NOT NULL DEFAULT 1,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_org_code (tenant_id, org_code),
+  KEY idx_sys_org_parent (tenant_id, parent_id)
+);
+
+CREATE TABLE IF NOT EXISTS sys_user (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  org_id BIGINT NULL,
+  account VARCHAR(64) NOT NULL,
+  username VARCHAR(128) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  email VARCHAR(128) NULL,
+  mobile VARCHAR(32) NULL,
+  status TINYINT NOT NULL DEFAULT 1,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_user_account (tenant_id, account),
+  KEY idx_sys_user_org (tenant_id, org_id)
+);
+
+CREATE TABLE IF NOT EXISTS sys_role (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  role_code VARCHAR(64) NOT NULL,
+  role_name VARCHAR(128) NOT NULL,
+  scope_type VARCHAR(32) NOT NULL DEFAULT 'TENANT',
+  status TINYINT NOT NULL DEFAULT 1,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_role_code (tenant_id, role_code)
+);
+
+CREATE TABLE IF NOT EXISTS sys_user_role (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  role_id BIGINT NOT NULL,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_user_role (tenant_id, user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS sys_permission (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  permission_code VARCHAR(64) NOT NULL,
+  permission_name VARCHAR(128) NOT NULL,
+  permission_type VARCHAR(32) NOT NULL DEFAULT 'API',
+  path VARCHAR(255) NULL,
+  method VARCHAR(16) NULL,
+  status TINYINT NOT NULL DEFAULT 1,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_permission_code (tenant_id, permission_code)
+);
+
+CREATE TABLE IF NOT EXISTS sys_role_permission (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  role_id BIGINT NOT NULL,
+  permission_id BIGINT NOT NULL,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_role_permission (tenant_id, role_id, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS sys_login_log (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  user_id BIGINT NULL,
+  account VARCHAR(64) NULL,
+  login_result VARCHAR(32) NOT NULL,
+  ip_address VARCHAR(64) NULL,
+  user_agent VARCHAR(500) NULL,
+  login_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_sys_login_log_user (tenant_id, user_id),
+  KEY idx_sys_login_log_time (tenant_id, login_at)
+);
+
+CREATE TABLE IF NOT EXISTS sys_operation_log (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  user_id BIGINT NULL,
+  module_name VARCHAR(64) NOT NULL,
+  operation_name VARCHAR(128) NOT NULL,
+  request_uri VARCHAR(255) NULL,
+  request_method VARCHAR(16) NULL,
+  operation_result VARCHAR(32) NOT NULL DEFAULT 'SUCCESS',
+  operation_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_sys_operation_log_user (tenant_id, user_id),
+  KEY idx_sys_operation_log_time (tenant_id, operation_at)
+);

@@ -1,0 +1,9 @@
+target/
+.m2/
+.idea/
+.vscode/
+*.iml
+*.log
+.DS_Store
+.mvn/apache-maven-*/
+*.local.yml

@@ -198,20 +198,21 @@ ON DUPLICATE KEY UPDATE
   updated_at = CURRENT_TIMESTAMP;
 
 INSERT INTO biz_standard (
-  id, tenant_id, standard_group_id, title, category, standard_version, version_number, previous_version_id,
-  publish_date, status, description, tags, visibility_level, owner_scope_id, shared_scope_ids, change_log, remark,
+  id, tenant_id, standard_group_id, standard_code, title, category, standard_version, version_number, previous_version_id,
+  publish_date, status, description, visibility_level, owner_scope_id, shared_scope_ids, change_log, remark,
   deleted, version, created_by, updated_by
 ) VALUES
-  (9901, 1001, 'std-001', 'Finance Standard Baseline', 'internal', 'V1.0', 1, NULL,
-   '2026-04-23', 'active', 'Finance-owned internal control baseline', '内控,财务', 'PUBLIC', 9001, '9002', 'Initial release',
+  (9901, 1001, 'std-001', 'STD-FIN-001', 'Finance Standard Baseline', 'internal', 'V1.0', 1, NULL,
+   '2026-04-23', 'active', 'Finance-owned internal control baseline', 'PUBLIC', 9001, '9002', 'Initial release',
    'Finance baseline seed data', 0, 0, 2001, 2001),
-  (9902, 1001, 'std-002', 'IT Security Checklist Standard', 'system', 'V1.0', 1, NULL,
-   '2026-04-23', 'active', 'IT-owned security standard', '信息安全,IT审计', 'SCOPED', 9002, '9003', 'Initial release',
+  (9902, 1001, 'std-002', 'STD-IT-002', 'IT Security Checklist Standard', 'system', 'V1.0', 1, NULL,
+   '2026-04-23', 'active', 'IT-owned security standard', 'SCOPED', 9002, '9003', 'Initial release',
    'IT security seed data', 0, 0, 2001, 2001),
-  (9903, 1001, 'std-003', 'Compliance Review Procedure', 'industry', 'V1.0', 1, NULL,
-   '2026-04-23', 'draft', 'Compliance review draft', '合规', 'SCOPED', 9003, NULL, 'Draft created',
+  (9903, 1001, 'std-003', 'STD-COMP-003', 'Compliance Review Procedure', 'industry', 'V1.0', 1, NULL,
+   '2026-04-23', 'draft', 'Compliance review draft', 'SCOPED', 9003, NULL, 'Draft created',
    'Compliance draft seed data', 0, 0, 2001, 2001)
 ON DUPLICATE KEY UPDATE
+  standard_code = VALUES(standard_code),
   title = VALUES(title),
   category = VALUES(category),
   standard_version = VALUES(standard_version),
@@ -220,7 +221,6 @@ ON DUPLICATE KEY UPDATE
   publish_date = VALUES(publish_date),
   status = VALUES(status),
   description = VALUES(description),
-  tags = VALUES(tags),
   visibility_level = VALUES(visibility_level),
   owner_scope_id = VALUES(owner_scope_id),
   shared_scope_ids = VALUES(shared_scope_ids),

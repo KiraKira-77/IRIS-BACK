@@ -57,6 +57,7 @@ class StandardServiceTests {
     entity.setId(9901L);
     entity.setTenantId(1001L);
     entity.setStandardGroupId("std-001");
+    entity.setStandardCode("STD-FIN-001");
     entity.setTitle("Finance Baseline");
     entity.setCategory("internal");
     entity.setStandardVersion("V1.0");
@@ -67,11 +68,11 @@ class StandardServiceTests {
     entity.setVisibilityLevel("SCOPED");
     entity.setOwnerScopeId(9001L);
     entity.setSharedScopeIds("9002,9003");
-    entity.setTags("finance,internal-control");
     BizStandardEntity hidden = new BizStandardEntity();
     hidden.setId(9902L);
     hidden.setTenantId(1001L);
     hidden.setStandardGroupId("std-002");
+    hidden.setStandardCode("STD-IT-002");
     hidden.setTitle("IT Restricted");
     hidden.setCategory("internal");
     hidden.setStandardVersion("V1.0");
@@ -82,7 +83,6 @@ class StandardServiceTests {
     hidden.setVisibilityLevel("SCOPED");
     hidden.setOwnerScopeId(9010L);
     hidden.setSharedScopeIds("9011");
-    hidden.setTags("it");
     when(standardMapper.selectList(any())).thenReturn(List.of(entity, hidden));
     when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
         scopeMember(9001L, 2004L, 1, 0, 0, 0, 0),
@@ -93,10 +93,10 @@ class StandardServiceTests {
 
     assertThat(result).hasSize(1);
     assertThat(result.getFirst().id()).isEqualTo("9901");
+    assertThat(result.getFirst().standardCode()).isEqualTo("STD-FIN-001");
     assertThat(result.getFirst().ownerScopeId()).isEqualTo("9001");
     assertThat(result.getFirst().grants()).extracting(grant -> grant.scopeId() + ":" + grant.actions())
         .containsExactly("9002:[view]", "9003:[view]");
-    assertThat(result.getFirst().tags()).containsExactly("finance", "internal-control");
   }
 
   @Test
@@ -117,7 +117,7 @@ class StandardServiceTests {
         "draft",
         "2026-04-23",
         "standard description",
-        List.of("finance", "internal-control"),
+        "STD-FIN-002",
         null,
         null,
         null,
@@ -132,11 +132,12 @@ class StandardServiceTests {
 
     assertThat(created.id()).isEqualTo("9902");
     assertThat(created.standardGroupId()).isEqualTo("9902");
+    assertThat(created.standardCode()).isEqualTo("STD-FIN-002");
     assertThat(created.ownerScopeId()).isEqualTo("9001");
     assertThat(created.visibilityLevel()).isEqualTo("PUBLIC");
     assertThat(created.grants()).extracting(grant -> grant.scopeId()).containsExactly("9002");
+    assertThat(captor.getValue().getStandardCode()).isEqualTo("STD-FIN-002");
     assertThat(captor.getValue().getSharedScopeIds()).isEqualTo("9002");
-    assertThat(captor.getValue().getTags()).isEqualTo("finance,internal-control");
   }
 
   @Test
@@ -157,7 +158,7 @@ class StandardServiceTests {
         "draft",
         null,
         "standard description",
-        List.of("finance"),
+        "STD-FIN-003",
         null,
         null,
         null,
@@ -190,7 +191,7 @@ class StandardServiceTests {
         "draft",
         null,
         "standard description",
-        List.of("finance"),
+        "STD-FIN-004",
         null,
         null,
         null,
@@ -224,7 +225,7 @@ class StandardServiceTests {
         "draft",
         null,
         "standard description",
-        List.of("finance"),
+        "STD-FIN-005",
         null,
         null,
         null,
@@ -256,7 +257,7 @@ class StandardServiceTests {
         "draft",
         null,
         "standard description",
-        List.of("finance"),
+        "STD-FIN-006",
         null,
         null,
         null,
@@ -285,7 +286,7 @@ class StandardServiceTests {
         "draft",
         null,
         "standard description",
-        List.of("finance"),
+        "STD-SHARED-001",
         null,
         null,
         null,

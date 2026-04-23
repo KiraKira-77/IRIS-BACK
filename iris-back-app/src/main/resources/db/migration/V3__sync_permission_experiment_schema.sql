@@ -64,7 +64,6 @@ CREATE TABLE IF NOT EXISTS biz_standard (
   publish_date DATE NULL,
   status VARCHAR(32) NOT NULL,
   description TEXT NULL,
-  tags VARCHAR(500) NULL,
   visibility_level VARCHAR(32) NOT NULL DEFAULT 'PUBLIC',
   owner_scope_id BIGINT NOT NULL,
   shared_scope_ids VARCHAR(500) NULL,

@@ -12,7 +12,7 @@ public record StandardUpsertRequest(
     @NotBlank String status,
     String publishDate,
     String description,
-    List<String> tags,
+    @NotBlank String standardCode,
     String standardGroupId,
     Integer versionNumber,
     String previousVersionId,

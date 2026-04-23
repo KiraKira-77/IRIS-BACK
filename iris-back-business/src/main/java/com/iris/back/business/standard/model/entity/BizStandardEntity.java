@@ -9,6 +9,7 @@ import java.time.LocalDate;
 public class BizStandardEntity extends BaseEntity {
 
   private String standardGroupId;
+  private String standardCode;
   private String title;
   private String category;
 
@@ -20,7 +21,6 @@ public class BizStandardEntity extends BaseEntity {
   private LocalDate publishDate;
   private String status;
   private String description;
-  private String tags;
   private String visibilityLevel;
   private Long ownerScopeId;
   private String sharedScopeIds;
@@ -32,6 +32,14 @@ public class BizStandardEntity extends BaseEntity {
 
   public void setStandardGroupId(String standardGroupId) {
     this.standardGroupId = standardGroupId;
+  }
+
+  public String getStandardCode() {
+    return standardCode;
+  }
+
+  public void setStandardCode(String standardCode) {
+    this.standardCode = standardCode;
   }
 
   public String getTitle() {
@@ -96,14 +104,6 @@ public class BizStandardEntity extends BaseEntity {
 
   public void setDescription(String description) {
     this.description = description;
-  }
-
-  public String getTags() {
-    return tags;
-  }
-
-  public void setTags(String tags) {
-    this.tags = tags;
   }
 
   public String getVisibilityLevel() {

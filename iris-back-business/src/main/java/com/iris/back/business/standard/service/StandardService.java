@@ -119,13 +119,13 @@ public class StandardService {
   }
 
   private void applyFields(BizStandardEntity entity, StandardUpsertRequest request, Long ownerScopeId) {
+    entity.setStandardCode(normalizeRequiredText(request.standardCode()));
     entity.setTitle(request.title());
     entity.setCategory(request.category());
     entity.setStandardVersion(request.version());
     entity.setStatus(request.status());
     entity.setPublishDate(parseDate(request.publishDate()));
     entity.setDescription(request.description());
-    entity.setTags(String.join(",", normalizeTags(request.tags())));
     entity.setVersionNumber(request.versionNumber() == null ? 1 : request.versionNumber());
     entity.setPreviousVersionId(parseOptionalId(request.previousVersionId()));
     entity.setVisibilityLevel(request.visibilityLevel());
@@ -190,15 +190,6 @@ public class StandardService {
     }
   }
 
-  private List<String> normalizeTags(List<String> tags) {
-    return tags == null ? List.of() : tags.stream()
-        .filter(Objects::nonNull)
-        .map(String::trim)
-        .filter(tag -> !tag.isEmpty())
-        .distinct()
-        .toList();
-  }
-
   private List<String> normalizeScopeIds(List<String> scopeIds, Long ownerScopeId, Long tenantId) {
     return scopeIds == null ? List.of() : scopeIds.stream()
         .filter(Objects::nonNull)
@@ -220,13 +211,13 @@ public class StandardService {
     return new StandardDto(
         String.valueOf(entity.getId()),
         entity.getStandardGroupId(),
+        entity.getStandardCode(),
         entity.getTitle(),
         entity.getCategory(),
         entity.getStandardVersion(),
         entity.getPublishDate() == null ? null : entity.getPublishDate().toString(),
         entity.getStatus(),
         List.of(),
-        splitCommaValues(entity.getTags()),
         entity.getDescription(),
         entity.getCreatedAt() == null ? null : entity.getCreatedAt().toString(),
         entity.getUpdatedAt() == null ? null : entity.getUpdatedAt().toString(),
@@ -239,6 +230,10 @@ public class StandardService {
             .toList(),
         entity.getChangeLog()
     );
+  }
+
+  private String normalizeRequiredText(String value) {
+    return value == null ? null : value.trim();
   }
 
   private List<String> splitCommaValues(String raw) {

@@ -16,8 +16,8 @@ import com.iris.back.system.mapper.SysOrgMapper;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
-import com.iris.back.system.mapper.SysRoleMenuMapper;
 import com.iris.back.system.mapper.SysRoleMapper;
+import com.iris.back.system.mapper.SysRoleMenuMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
 import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.mapper.SysUserRoleMapper;
@@ -89,13 +89,13 @@ class StandardControllerTests {
     when(standardService.list()).thenReturn(List.of(new StandardDto(
         "9901",
         "std-001",
+        "STD-FIN-001",
         "Finance Standard",
         "internal",
         "V1.0",
         "2026-04-23",
         "active",
         List.of(),
-        List.of("内控"),
         "desc",
         "2026-04-23T00:00:00",
         "2026-04-23T00:00:00",
@@ -110,6 +110,7 @@ class StandardControllerTests {
     mockMvc.perform(get("/api/v1/standards"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data[0].standardCode").value("STD-FIN-001"))
         .andExpect(jsonPath("$.data[0].title").value("Finance Standard"))
         .andExpect(jsonPath("$.data[0].visibilityLevel").value("SCOPED"))
         .andExpect(jsonPath("$.data[0].ownerScopeId").value("9001"))
@@ -122,13 +123,13 @@ class StandardControllerTests {
     when(standardService.create(any())).thenReturn(new StandardDto(
         "9902",
         "9902",
+        "STD-FIN-002",
         "Finance Standard",
         "internal",
         "V1.0",
         "2026-04-23",
         "draft",
         List.of(),
-        List.of("内控"),
         "desc",
         "2026-04-23T00:00:00",
         "2026-04-23T00:00:00",
@@ -151,7 +152,7 @@ class StandardControllerTests {
                   "status": "draft",
                   "publishDate": "2026-04-23",
                   "description": "desc",
-                  "tags": ["内控"],
+                  "standardCode": "STD-FIN-002",
                   "visibilityLevel": "PUBLIC",
                   "ownerScopeId": "9001",
                   "grantScopeIds": ["9002"],
@@ -161,6 +162,7 @@ class StandardControllerTests {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(true))
         .andExpect(jsonPath("$.data.id").value("9902"))
+        .andExpect(jsonPath("$.data.standardCode").value("STD-FIN-002"))
         .andExpect(jsonPath("$.data.ownerScopeId").value("9001"))
         .andExpect(jsonPath("$.data.grants[0].scopeId").value("9002"));
   }

@@ -2,6 +2,8 @@ package com.iris.back.system.service;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.common.exception.BusinessException;
+import com.iris.back.framework.security.CurrentUserContext;
+import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
@@ -25,17 +27,20 @@ public class ResourceScopeService {
   private final SysResourceScopeMapper resourceScopeMapper;
   private final SysResourceScopeMemberMapper resourceScopeMemberMapper;
   private final SysResourceScopeUsageMapper resourceScopeUsageMapper;
+  private final CurrentUserContext currentUserContext;
   private final IdentifierGenerator identifierGenerator;
 
   public ResourceScopeService(
       SysResourceScopeMapper resourceScopeMapper,
       SysResourceScopeMemberMapper resourceScopeMemberMapper,
       SysResourceScopeUsageMapper resourceScopeUsageMapper,
+      CurrentUserContext currentUserContext,
       IdentifierGenerator identifierGenerator
   ) {
     this.resourceScopeMapper = resourceScopeMapper;
     this.resourceScopeMemberMapper = resourceScopeMemberMapper;
     this.resourceScopeUsageMapper = resourceScopeUsageMapper;
+    this.currentUserContext = currentUserContext;
     this.identifierGenerator = identifierGenerator;
   }
 
@@ -73,6 +78,11 @@ public class ResourceScopeService {
   public List<ResourceScopeMemberDto> listMembers(Long scopeId) {
     requireScope(scopeId);
     return resourceScopeMemberMapper.selectMembersByScopeId(scopeId);
+  }
+
+  public List<ResourceScopeMemberDto> listCurrentUserMemberships() {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    return resourceScopeMemberMapper.selectByTenantIdAndUserId(principal.tenantId(), principal.userId());
   }
 
   public void replaceMembers(Long scopeId, ResourceScopeMemberReplaceRequest request) {

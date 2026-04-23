@@ -58,9 +58,9 @@ ON DUPLICATE KEY UPDATE
 INSERT INTO sys_role (
   id, tenant_id, role_code, role_name, scope_type, status, remark, deleted, version, created_by, updated_by
 ) VALUES
-  (3001, 1001, 'PLATFORM_ADMIN', 'Platform Administrator', 'PLATFORM', 1, 'Platform-level super role', 0, 0, 2001, 2001),
-  (3002, 1001, 'TENANT_ADMIN', 'Tenant Administrator', 'TENANT', 1, 'Tenant-level admin role', 0, 0, 2001, 2001),
-  (3003, 1001, 'AUDITOR', 'Auditor', 'TENANT', 1, 'Read-only auditor role', 0, 0, 2001, 2001)
+  (3001, 1001, 'PLATFORM_ADMIN', '超级管理员', 'GLOBAL', 1, '全局级超级管理员角色', 0, 0, 2001, 2001),
+  (3002, 1001, 'TENANT_ADMIN', '管理员', 'BUSINESS', 1, '业务级管理员角色', 0, 0, 2001, 2001),
+  (3003, 1001, 'AUDITOR', '审计员', 'BUSINESS', 1, '业务级只读审计角色', 0, 0, 2001, 2001)
 ON DUPLICATE KEY UPDATE
   role_name = VALUES(role_name),
   scope_type = VALUES(scope_type),

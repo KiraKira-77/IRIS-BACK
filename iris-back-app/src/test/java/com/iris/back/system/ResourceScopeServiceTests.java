@@ -10,9 +10,12 @@ import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.common.exception.BusinessException;
+import com.iris.back.framework.security.CurrentUserContext;
+import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
+import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysResourceScopeMemberEntity;
 import com.iris.back.system.model.request.ResourceScopeMemberReplaceRequest;
@@ -41,6 +44,9 @@ class ResourceScopeServiceTests {
 
   @Mock
   private IdentifierGenerator identifierGenerator;
+
+  @Mock
+  private CurrentUserContext currentUserContext;
 
   @InjectMocks
   private ResourceScopeService resourceScopeService;
@@ -86,6 +92,40 @@ class ResourceScopeServiceTests {
     assertThat(captor.getValue()).hasSize(2);
     assertThat(captor.getValue().getFirst().getCanManage()).isEqualTo(1);
     assertThat(captor.getValue().get(1).getCanEdit()).isEqualTo(0);
+  }
+
+  @Test
+  void listCurrentUserMembershipsUsesCurrentUserContext() {
+    when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
+        "token-1",
+        2047157959175438300L,
+        1001L,
+        "00320283",
+        "Finance User",
+        "Default Tenant",
+        List.of("AUDITOR")
+    ));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2047157959175438300L)).thenReturn(List.of(
+        new ResourceScopeMemberDto(
+            "9104",
+            "9001",
+            "2047157959175438300",
+            "00320283",
+            "Finance User",
+            1,
+            1,
+            1,
+            0,
+            0,
+            "finance member"
+        )
+    ));
+
+    var memberships = resourceScopeService.listCurrentUserMemberships();
+
+    assertThat(memberships).hasSize(1);
+    assertThat(memberships.getFirst().scopeId()).isEqualTo("9001");
+    verify(resourceScopeMemberMapper).selectByTenantIdAndUserId(1001L, 2047157959175438300L);
   }
 
   @Test

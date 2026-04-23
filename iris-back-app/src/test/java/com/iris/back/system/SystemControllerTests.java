@@ -10,6 +10,7 @@ import com.iris.back.auth.service.AuthService;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.service.StandardService;
 import com.iris.back.framework.security.AuthSessionStore;
+import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.mapper.SysOrgMapper;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
@@ -19,6 +20,7 @@ import com.iris.back.system.mapper.SysRoleMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
 import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.mapper.SysUserRoleMapper;
+import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysTenantEntity;
 import com.iris.back.system.model.entity.SysUserEntity;
@@ -31,8 +33,11 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 
 @SpringBootTest(properties = {
     "spring.autoconfigure.exclude="
@@ -165,6 +170,47 @@ class SystemControllerTests {
         .andExpect(jsonPath("$.success").value(true))
         .andExpect(jsonPath("$.data[0].id").value("2047157959175438304"))
         .andExpect(jsonPath("$.data[0].roleIds[0]").value("3002"));
+  }
+
+  @Test
+  void listCurrentUserResourceScopeMembershipsReturnsCurrentUserPermissions() throws Exception {
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2047157959175438300L)).thenReturn(List.of(
+        new ResourceScopeMemberDto(
+            "9104",
+            "9001",
+            "2047157959175438300",
+            "00320283",
+            "Finance User",
+            1,
+            1,
+            1,
+            0,
+            0,
+            "finance member"
+        )
+    ));
+
+    CurrentUserPrincipal principal = new CurrentUserPrincipal(
+        "token-1",
+        2047157959175438300L,
+        1001L,
+        "00320283",
+        "Finance User",
+        "Default Tenant",
+        List.of("AUDITOR")
+    );
+
+    var auth = UsernamePasswordAuthenticationToken.authenticated(
+        principal,
+        principal.token(),
+        List.of(new SimpleGrantedAuthority("AUDITOR"))
+    );
+
+    mockMvc.perform(get("/api/v1/system/resource-scopes/my-memberships").with(authentication(auth)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data[0].scopeId").value("9001"))
+        .andExpect(jsonPath("$.data[0].canCreate").value(1));
   }
 
   @Test

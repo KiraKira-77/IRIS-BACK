@@ -19,6 +19,10 @@ public class RoleService {
   private static final long SYSTEM_USER_ID = 2001L;
   private static final String PLATFORM_ADMIN_ROLE_CODE = "PLATFORM_ADMIN";
   private static final String SUPER_ADMIN_ROLE_CODE = "SUPER_ADMIN";
+  private static final String ROLE_SCOPE_GLOBAL = "GLOBAL";
+  private static final String ROLE_SCOPE_BUSINESS = "BUSINESS";
+  private static final String LEGACY_ROLE_SCOPE_PLATFORM = "PLATFORM";
+  private static final String LEGACY_ROLE_SCOPE_TENANT = "TENANT";
 
   private final SysRoleMapper roleMapper;
   private final SysRoleMenuMapper roleMenuMapper;
@@ -55,7 +59,7 @@ public class RoleService {
     entity.setTenantId(request.tenantId());
     entity.setRoleCode(request.roleCode());
     entity.setRoleName(request.roleName());
-    entity.setScopeType(request.scopeType());
+    entity.setScopeType(normalizeScopeType(request.scopeType()));
     entity.setStatus(request.status());
     entity.setRemark(request.remark());
     entity.setDeleted(0);
@@ -73,7 +77,7 @@ public class RoleService {
     entity.setTenantId(request.tenantId());
     entity.setRoleCode(request.roleCode());
     entity.setRoleName(request.roleName());
-    entity.setScopeType(request.scopeType());
+    entity.setScopeType(normalizeScopeType(request.scopeType()));
     entity.setStatus(request.status());
     entity.setRemark(request.remark());
     entity.setUpdatedBy(SYSTEM_USER_ID);
@@ -121,7 +125,7 @@ public class RoleService {
         stringify(entity.getTenantId()),
         entity.getRoleCode(),
         entity.getRoleName(),
-        entity.getScopeType(),
+        normalizeScopeType(entity.getScopeType()),
         entity.getStatus(),
         entity.getRemark(),
         menuCodes
@@ -156,5 +160,20 @@ public class RoleService {
 
   private String stringify(Long value) {
     return value == null ? null : String.valueOf(value);
+  }
+
+  private String normalizeScopeType(String scopeType) {
+    if (scopeType == null) {
+      return null;
+    }
+
+    String normalized = scopeType.trim().toUpperCase();
+    if (LEGACY_ROLE_SCOPE_PLATFORM.equals(normalized) || ROLE_SCOPE_GLOBAL.equals(normalized)) {
+      return ROLE_SCOPE_GLOBAL;
+    }
+    if (LEGACY_ROLE_SCOPE_TENANT.equals(normalized) || ROLE_SCOPE_BUSINESS.equals(normalized)) {
+      return ROLE_SCOPE_BUSINESS;
+    }
+    return normalized;
   }
 }

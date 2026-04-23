@@ -64,9 +64,28 @@ class RoleServiceTests {
     assertThat(created.id()).isEqualTo("9300001");
     assertThat(captor.getValue().getId()).isEqualTo(9300001L);
     assertThat(captor.getValue().getRoleCode()).isEqualTo("REVIEWER");
+    assertThat(captor.getValue().getScopeType()).isEqualTo("BUSINESS");
+    assertThat(created.scopeType()).isEqualTo("BUSINESS");
     assertThat(created.menuCodes()).containsExactly("workbench.dashboard", "resource.standards");
     assertThat(menuCaptor.getValue()).extracting(SysRoleMenuEntity::getMenuCode)
         .containsExactly("workbench.dashboard", "resource.standards");
+  }
+
+  @Test
+  void getNormalizesLegacyPlatformScopeType() {
+    SysRoleEntity entity = new SysRoleEntity();
+    entity.setId(3001L);
+    entity.setTenantId(1001L);
+    entity.setRoleCode("PLATFORM_ADMIN");
+    entity.setRoleName("Platform Administrator");
+    entity.setScopeType("PLATFORM");
+    entity.setStatus(1);
+    when(roleMapper.selectById(3001L)).thenReturn(entity);
+    when(roleMenuMapper.selectMenuCodesByRoleId(3001L)).thenReturn(List.of("system.roles"));
+
+    var role = roleService.get(3001L);
+
+    assertThat(role.scopeType()).isEqualTo("GLOBAL");
   }
 
   @Test

@@ -32,6 +32,11 @@ public class ResourceScopeController {
     return ApiResponse.success(resourceScopeService.list());
   }
 
+  @GetMapping("/my-memberships")
+  public ApiResponse<List<ResourceScopeMemberDto>> listCurrentUserMemberships() {
+    return ApiResponse.success(resourceScopeService.listCurrentUserMemberships());
+  }
+
   @GetMapping("/{id}")
   public ApiResponse<ResourceScopeDto> get(@PathVariable Long id) {
     return ApiResponse.success(resourceScopeService.get(id));

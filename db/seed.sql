@@ -39,6 +39,22 @@ ON DUPLICATE KEY UPDATE
   updated_by = VALUES(updated_by),
   updated_at = CURRENT_TIMESTAMP;
 
+INSERT INTO sys_user (
+  id, tenant_id, org_id, account, username, password_hash, email, mobile, status, remark, deleted, version, created_by, updated_by
+) VALUES
+  (2002, 1001, 1101, 'finance_mgr', 'Finance Manager', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5a5y9N8MaqkOawx2UY8ailqXF/w3v9e', 'finance@iris.local', '13800000001', 1, 'Finance scope manager', 0, 0, 2001, 2001),
+  (2003, 1001, 1101, 'it_mgr', 'IT Manager', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5a5y9N8MaqkOawx2UY8ailqXF/w3v9e', 'it@iris.local', '13800000002', 1, 'IT scope manager', 0, 0, 2001, 2001),
+  (2004, 1001, 1101, 'auditor_1', 'Senior Auditor', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5a5y9N8MaqkOawx2UY8ailqXF/w3v9e', 'auditor@iris.local', '13800000003', 1, 'Read-only auditor user', 0, 0, 2001, 2001)
+ON DUPLICATE KEY UPDATE
+  username = VALUES(username),
+  password_hash = VALUES(password_hash),
+  email = VALUES(email),
+  mobile = VALUES(mobile),
+  status = VALUES(status),
+  remark = VALUES(remark),
+  updated_by = VALUES(updated_by),
+  updated_at = CURRENT_TIMESTAMP;
+
 INSERT INTO sys_role (
   id, tenant_id, role_code, role_name, scope_type, status, remark, deleted, version, created_by, updated_by
 ) VALUES
@@ -87,6 +103,39 @@ INSERT INTO sys_role_permission (
   (6003, 1001, 3001, 4003, 'Bootstrap binding', 0, 0, 2001, 2001),
   (6004, 1001, 3001, 4004, 'Bootstrap binding', 0, 0, 2001, 2001)
 ON DUPLICATE KEY UPDATE
+  remark = VALUES(remark),
+  updated_by = VALUES(updated_by),
+  updated_at = CURRENT_TIMESTAMP;
+
+INSERT INTO sys_resource_scope (
+  id, tenant_id, scope_code, scope_name, scope_type, status, remark, deleted, version, created_by, updated_by
+) VALUES
+  (9001, 1001, 'FINANCE', 'Finance Scope', 'RESOURCE', 1, 'Finance-owned standards and checklists', 0, 0, 2001, 2001),
+  (9002, 1001, 'IT', 'IT Scope', 'RESOURCE', 1, 'IT-owned standards and checklists', 0, 0, 2001, 2001),
+  (9003, 1001, 'COMPLIANCE', 'Compliance Scope', 'RESOURCE', 1, 'Compliance-owned shared resources', 0, 0, 2001, 2001)
+ON DUPLICATE KEY UPDATE
+  scope_name = VALUES(scope_name),
+  scope_type = VALUES(scope_type),
+  status = VALUES(status),
+  remark = VALUES(remark),
+  updated_by = VALUES(updated_by),
+  updated_at = CURRENT_TIMESTAMP;
+
+INSERT INTO sys_resource_scope_member (
+  id, tenant_id, scope_id, user_id, can_view, can_create, can_edit, can_delete, can_manage, remark, deleted, version, created_by, updated_by
+) VALUES
+  (9101, 1001, 9001, 2001, 1, 1, 1, 1, 1, 'Bootstrap admin membership', 0, 0, 2001, 2001),
+  (9102, 1001, 9002, 2001, 1, 1, 1, 1, 1, 'Bootstrap admin membership', 0, 0, 2001, 2001),
+  (9103, 1001, 9003, 2001, 1, 1, 1, 1, 1, 'Bootstrap admin membership', 0, 0, 2001, 2001),
+  (9104, 1001, 9001, 2002, 1, 1, 1, 0, 1, 'Finance manager membership', 0, 0, 2001, 2001),
+  (9105, 1001, 9002, 2003, 1, 1, 1, 0, 1, 'IT manager membership', 0, 0, 2001, 2001),
+  (9106, 1001, 9003, 2004, 1, 0, 0, 0, 0, 'Auditor membership', 0, 0, 2001, 2001)
+ON DUPLICATE KEY UPDATE
+  can_view = VALUES(can_view),
+  can_create = VALUES(can_create),
+  can_edit = VALUES(can_edit),
+  can_delete = VALUES(can_delete),
+  can_manage = VALUES(can_manage),
   remark = VALUES(remark),
   updated_by = VALUES(updated_by),
   updated_at = CURRENT_TIMESTAMP;

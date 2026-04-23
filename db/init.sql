@@ -128,6 +128,44 @@ CREATE TABLE IF NOT EXISTS sys_role_permission (
   UNIQUE KEY uk_sys_role_permission (tenant_id, role_id, permission_id)
 );
 
+CREATE TABLE IF NOT EXISTS sys_resource_scope (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  scope_code VARCHAR(64) NOT NULL,
+  scope_name VARCHAR(128) NOT NULL,
+  scope_type VARCHAR(32) NOT NULL DEFAULT 'RESOURCE',
+  status TINYINT NOT NULL DEFAULT 1,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_resource_scope_code (tenant_id, scope_code)
+);
+
+CREATE TABLE IF NOT EXISTS sys_resource_scope_member (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  scope_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  can_view TINYINT NOT NULL DEFAULT 1,
+  can_create TINYINT NOT NULL DEFAULT 0,
+  can_edit TINYINT NOT NULL DEFAULT 0,
+  can_delete TINYINT NOT NULL DEFAULT 0,
+  can_manage TINYINT NOT NULL DEFAULT 0,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_resource_scope_member (tenant_id, scope_id, user_id),
+  KEY idx_sys_resource_scope_member_user (tenant_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS sys_login_log (
   id BIGINT NOT NULL PRIMARY KEY,
   tenant_id BIGINT NOT NULL,

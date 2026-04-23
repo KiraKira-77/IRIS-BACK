@@ -1,0 +1,82 @@
+package com.iris.back.system;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.iris.back.system.mapper.SysResourceScopeMapper;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.model.entity.SysResourceScopeEntity;
+import com.iris.back.system.model.entity.SysResourceScopeMemberEntity;
+import com.iris.back.system.model.request.ResourceScopeMemberReplaceRequest;
+import com.iris.back.system.model.request.ResourceScopeMemberUpsertRequest;
+import com.iris.back.system.model.request.ResourceScopeUpsertRequest;
+import com.iris.back.system.service.ResourceScopeService;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class ResourceScopeServiceTests {
+
+  @Mock
+  private SysResourceScopeMapper resourceScopeMapper;
+
+  @Mock
+  private SysResourceScopeMemberMapper resourceScopeMemberMapper;
+
+  @Mock
+  private IdentifierGenerator identifierGenerator;
+
+  @InjectMocks
+  private ResourceScopeService resourceScopeService;
+
+  @Test
+  void createAssignsGeneratedIdBeforeInsert() {
+    when(identifierGenerator.nextId(any())).thenReturn(9101001L);
+
+    var created = resourceScopeService.create(new ResourceScopeUpsertRequest(
+        1001L, "FINANCE", "Finance Scope", "RESOURCE", 1, "created in test"
+    ));
+
+    ArgumentCaptor<SysResourceScopeEntity> captor = ArgumentCaptor.forClass(SysResourceScopeEntity.class);
+    verify(resourceScopeMapper).insert(captor.capture());
+
+    assertThat(created.id()).isEqualTo(9101001L);
+    assertThat(captor.getValue().getId()).isEqualTo(9101001L);
+    assertThat(captor.getValue().getScopeCode()).isEqualTo("FINANCE");
+  }
+
+  @Test
+  void replaceMembersRewritesScopeMembersWithPermissionFlags() {
+    SysResourceScopeEntity scope = new SysResourceScopeEntity();
+    scope.setId(9101L);
+    scope.setTenantId(1001L);
+    scope.setScopeCode("FINANCE");
+    scope.setScopeName("Finance Scope");
+    scope.setScopeType("RESOURCE");
+    scope.setStatus(1);
+    when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
+    when(identifierGenerator.nextId(any()))
+        .thenReturn(9201001L)
+        .thenReturn(9201002L);
+
+    resourceScopeService.replaceMembers(9101L, new ResourceScopeMemberReplaceRequest(List.of(
+        new ResourceScopeMemberUpsertRequest(2001L, true, true, true, false, true, "admin member"),
+        new ResourceScopeMemberUpsertRequest(2002L, true, false, false, false, false, "readonly member")
+    )));
+
+    ArgumentCaptor<List<SysResourceScopeMemberEntity>> captor = ArgumentCaptor.forClass(List.class);
+    verify(resourceScopeMemberMapper).replaceForScope(9101L, captor.capture());
+
+    assertThat(captor.getValue()).hasSize(2);
+    assertThat(captor.getValue().getFirst().getCanManage()).isEqualTo(1);
+    assertThat(captor.getValue().get(1).getCanEdit()).isEqualTo(0);
+  }
+}

@@ -8,9 +8,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.iris.back.auth.service.AuthService;
 import com.iris.back.framework.security.AuthSessionStore;
 import com.iris.back.system.mapper.SysOrgMapper;
+import com.iris.back.system.mapper.SysResourceScopeMapper;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysRoleMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
 import com.iris.back.system.mapper.SysUserMapper;
+import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysTenantEntity;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -48,6 +51,12 @@ class SystemControllerTests {
 
   @MockBean
   private SysRoleMapper roleMapper;
+
+  @MockBean
+  private SysResourceScopeMapper resourceScopeMapper;
+
+  @MockBean
+  private SysResourceScopeMemberMapper resourceScopeMemberMapper;
 
   @MockBean
   private AuthSessionStore authSessionStore;
@@ -90,5 +99,43 @@ class SystemControllerTests {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(true))
         .andExpect(jsonPath("$.data.roleCode").value("AUDITOR"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void listResourceScopesReturnsSeedScopes() throws Exception {
+    SysResourceScopeEntity entity = new SysResourceScopeEntity();
+    entity.setId(9101L);
+    entity.setTenantId(1001L);
+    entity.setScopeCode("FINANCE");
+    entity.setScopeName("Finance Scope");
+    entity.setScopeType("RESOURCE");
+    entity.setStatus(1);
+    when(resourceScopeMapper.selectList(null)).thenReturn(List.of(entity));
+
+    mockMvc.perform(get("/api/v1/system/resource-scopes"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data[0].scopeCode").value("FINANCE"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void createResourceScopeReturnsCreatedPayload() throws Exception {
+    mockMvc.perform(post("/api/v1/system/resource-scopes")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "tenantId": 1001,
+                  "scopeCode": "IT",
+                  "scopeName": "IT Scope",
+                  "scopeType": "RESOURCE",
+                  "status": 1,
+                  "remark": "Created from test"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data.scopeCode").value("IT"));
   }
 }

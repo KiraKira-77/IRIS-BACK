@@ -1,11 +1,17 @@
 package com.iris.back;
 
 import com.iris.back.auth.service.AuthService;
+import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.framework.security.AuthSessionStore;
 import com.iris.back.system.mapper.SysOrgMapper;
+import com.iris.back.system.mapper.SysResourceScopeMapper;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
+import com.iris.back.system.mapper.SysRoleMenuMapper;
 import com.iris.back.system.mapper.SysRoleMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
 import com.iris.back.system.mapper.SysUserMapper;
+import com.iris.back.system.mapper.SysUserRoleMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -29,7 +35,25 @@ class IrisBackApplicationTests {
   private SysUserMapper userMapper;
 
   @MockBean
+  private SysUserRoleMapper userRoleMapper;
+
+  @MockBean
   private SysRoleMapper roleMapper;
+
+  @MockBean
+  private SysResourceScopeMapper resourceScopeMapper;
+
+  @MockBean
+  private SysResourceScopeMemberMapper resourceScopeMemberMapper;
+
+  @MockBean
+  private SysResourceScopeUsageMapper resourceScopeUsageMapper;
+
+  @MockBean
+  private SysRoleMenuMapper roleMenuMapper;
+
+  @MockBean
+  private BizStandardMapper bizStandardMapper;
 
   @MockBean
   private AuthSessionStore authSessionStore;

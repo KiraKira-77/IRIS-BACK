@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
 import com.iris.back.system.model.dto.ResourceScopeDto;
 import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
@@ -12,6 +13,7 @@ import com.iris.back.system.model.request.ResourceScopeMemberReplaceRequest;
 import com.iris.back.system.model.request.ResourceScopeMemberUpsertRequest;
 import com.iris.back.system.model.request.ResourceScopeUpsertRequest;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import org.springframework.stereotype.Service;
 
@@ -22,15 +24,18 @@ public class ResourceScopeService {
 
   private final SysResourceScopeMapper resourceScopeMapper;
   private final SysResourceScopeMemberMapper resourceScopeMemberMapper;
+  private final SysResourceScopeUsageMapper resourceScopeUsageMapper;
   private final IdentifierGenerator identifierGenerator;
 
   public ResourceScopeService(
       SysResourceScopeMapper resourceScopeMapper,
       SysResourceScopeMemberMapper resourceScopeMemberMapper,
+      SysResourceScopeUsageMapper resourceScopeUsageMapper,
       IdentifierGenerator identifierGenerator
   ) {
     this.resourceScopeMapper = resourceScopeMapper;
     this.resourceScopeMemberMapper = resourceScopeMemberMapper;
+    this.resourceScopeUsageMapper = resourceScopeUsageMapper;
     this.identifierGenerator = identifierGenerator;
   }
 
@@ -72,10 +77,24 @@ public class ResourceScopeService {
 
   public void replaceMembers(Long scopeId, ResourceScopeMemberReplaceRequest request) {
     SysResourceScopeEntity scope = requireScope(scopeId);
-    List<SysResourceScopeMemberEntity> members = request.members().stream()
+    List<SysResourceScopeMemberEntity> members = normalizeMembers(request.members()).stream()
         .map(member -> toMemberEntity(scope, member))
         .toList();
     resourceScopeMemberMapper.replaceForScope(scopeId, members);
+  }
+
+  public void delete(Long id) {
+    requireScopeDeletable(id);
+    resourceScopeMemberMapper.deleteByScopeIdHard(id);
+    resourceScopeMapper.deleteByIdHard(id);
+  }
+
+  private List<ResourceScopeMemberUpsertRequest> normalizeMembers(List<ResourceScopeMemberUpsertRequest> members) {
+    LinkedHashMap<Long, ResourceScopeMemberUpsertRequest> deduplicated = new LinkedHashMap<>();
+    for (ResourceScopeMemberUpsertRequest member : members) {
+      deduplicated.put(member.userId(), member);
+    }
+    return List.copyOf(deduplicated.values());
   }
 
   private void applyScopeFields(SysResourceScopeEntity entity, ResourceScopeUpsertRequest request) {
@@ -93,6 +112,15 @@ public class ResourceScopeService {
       throw new BusinessException("RESOURCE_SCOPE_NOT_FOUND", "resource scope not found: " + id);
     }
     return entity;
+  }
+
+  private void requireScopeDeletable(Long id) {
+    requireScope(id);
+    long ownerReferences = resourceScopeUsageMapper.countOwnerReferences(id);
+    long sharedReferences = resourceScopeUsageMapper.countSharedReferences(id);
+    if (ownerReferences > 0 || sharedReferences > 0) {
+      throw new BusinessException("RESOURCE_SCOPE_IN_USE", "resource scope is still referenced: " + id);
+    }
   }
 
   private SysResourceScopeMemberEntity toMemberEntity(
@@ -127,13 +155,17 @@ public class ResourceScopeService {
 
   private ResourceScopeDto toDto(SysResourceScopeEntity entity) {
     return new ResourceScopeDto(
-        entity.getId(),
-        entity.getTenantId(),
+        stringify(entity.getId()),
+        stringify(entity.getTenantId()),
         entity.getScopeCode(),
         entity.getScopeName(),
         entity.getScopeType(),
         entity.getStatus(),
         entity.getRemark()
     );
+  }
+
+  private String stringify(Long value) {
+    return value == null ? null : String.valueOf(value);
   }
 }

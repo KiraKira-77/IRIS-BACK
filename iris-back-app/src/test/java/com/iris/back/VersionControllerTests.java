@@ -10,6 +10,7 @@ import com.iris.back.system.mapper.SysOrgMapper;
 import com.iris.back.system.mapper.SysRoleMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
 import com.iris.back.system.mapper.SysUserMapper;
+import com.iris.back.system.mapper.SysUserRoleMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -38,6 +39,9 @@ class VersionControllerTests {
 
   @MockBean
   private SysUserMapper userMapper;
+
+  @MockBean
+  private SysUserRoleMapper userRoleMapper;
 
   @MockBean
   private SysRoleMapper roleMapper;

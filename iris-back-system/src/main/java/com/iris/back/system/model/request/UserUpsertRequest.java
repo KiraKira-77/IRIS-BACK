@@ -2,6 +2,7 @@ package com.iris.back.system.model.request;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import java.util.List;
 
 public record UserUpsertRequest(
     @NotNull(message = "must not be null") Long tenantId,
@@ -11,6 +12,7 @@ public record UserUpsertRequest(
     String email,
     String mobile,
     @NotNull(message = "must not be null") Integer status,
-    String remark
+    String remark,
+    List<Long> roleIds
 ) {
 }

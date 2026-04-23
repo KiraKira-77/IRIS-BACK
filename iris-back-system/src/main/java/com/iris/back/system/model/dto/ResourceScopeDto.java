@@ -1,8 +1,8 @@
 package com.iris.back.system.model.dto;
 
 public record ResourceScopeDto(
-    Long id,
-    Long tenantId,
+    String id,
+    String tenantId,
     String scopeCode,
     String scopeName,
     String scopeType,

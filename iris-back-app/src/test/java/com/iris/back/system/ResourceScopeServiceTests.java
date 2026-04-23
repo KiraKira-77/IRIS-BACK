@@ -1,13 +1,18 @@
 package com.iris.back.system;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.iris.back.common.exception.BusinessException;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysResourceScopeMemberEntity;
 import com.iris.back.system.model.request.ResourceScopeMemberReplaceRequest;
@@ -32,6 +37,9 @@ class ResourceScopeServiceTests {
   private SysResourceScopeMemberMapper resourceScopeMemberMapper;
 
   @Mock
+  private SysResourceScopeUsageMapper resourceScopeUsageMapper;
+
+  @Mock
   private IdentifierGenerator identifierGenerator;
 
   @InjectMocks
@@ -48,7 +56,7 @@ class ResourceScopeServiceTests {
     ArgumentCaptor<SysResourceScopeEntity> captor = ArgumentCaptor.forClass(SysResourceScopeEntity.class);
     verify(resourceScopeMapper).insert(captor.capture());
 
-    assertThat(created.id()).isEqualTo(9101001L);
+    assertThat(created.id()).isEqualTo("9101001");
     assertThat(captor.getValue().getId()).isEqualTo(9101001L);
     assertThat(captor.getValue().getScopeCode()).isEqualTo("FINANCE");
   }
@@ -73,10 +81,79 @@ class ResourceScopeServiceTests {
     )));
 
     ArgumentCaptor<List<SysResourceScopeMemberEntity>> captor = ArgumentCaptor.forClass(List.class);
-    verify(resourceScopeMemberMapper).replaceForScope(9101L, captor.capture());
+    verify(resourceScopeMemberMapper).replaceForScope(eq(9101L), captor.capture());
 
     assertThat(captor.getValue()).hasSize(2);
     assertThat(captor.getValue().getFirst().getCanManage()).isEqualTo(1);
     assertThat(captor.getValue().get(1).getCanEdit()).isEqualTo(0);
+  }
+
+  @Test
+  void replaceMembersDeduplicatesUsersWithinSingleRequest() {
+    SysResourceScopeEntity scope = new SysResourceScopeEntity();
+    scope.setId(9101L);
+    scope.setTenantId(1001L);
+    scope.setScopeCode("FINANCE");
+    scope.setScopeName("Finance Scope");
+    scope.setScopeType("RESOURCE");
+    scope.setStatus(1);
+    when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
+    when(identifierGenerator.nextId(any()))
+        .thenReturn(9201001L)
+        .thenReturn(9201002L);
+
+    resourceScopeService.replaceMembers(9101L, new ResourceScopeMemberReplaceRequest(List.of(
+        new ResourceScopeMemberUpsertRequest(2001L, true, false, false, false, false, "first"),
+        new ResourceScopeMemberUpsertRequest(2001L, true, true, true, false, true, "second")
+    )));
+
+    ArgumentCaptor<List<SysResourceScopeMemberEntity>> captor = ArgumentCaptor.forClass(List.class);
+    verify(resourceScopeMemberMapper).replaceForScope(eq(9101L), captor.capture());
+
+    assertThat(captor.getValue()).hasSize(1);
+    assertThat(captor.getValue().getFirst().getUserId()).isEqualTo(2001L);
+    assertThat(captor.getValue().getFirst().getCanManage()).isEqualTo(1);
+    assertThat(captor.getValue().getFirst().getRemark()).isEqualTo("second");
+  }
+
+  @Test
+  void deleteRemovesUnusedScopeAndMembers() {
+    SysResourceScopeEntity scope = new SysResourceScopeEntity();
+    scope.setId(9101L);
+    scope.setTenantId(1001L);
+    scope.setScopeCode("FINANCE");
+    scope.setScopeName("Finance Scope");
+    scope.setScopeType("RESOURCE");
+    scope.setStatus(1);
+    when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
+    when(resourceScopeUsageMapper.countOwnerReferences(9101L)).thenReturn(0L);
+    when(resourceScopeUsageMapper.countSharedReferences(9101L)).thenReturn(0L);
+
+    resourceScopeService.delete(9101L);
+
+    verify(resourceScopeMemberMapper).deleteByScopeIdHard(9101L);
+    verify(resourceScopeMapper).deleteByIdHard(9101L);
+  }
+
+  @Test
+  void deleteRejectsScopeUsedByStandards() {
+    SysResourceScopeEntity scope = new SysResourceScopeEntity();
+    scope.setId(9101L);
+    scope.setTenantId(1001L);
+    scope.setScopeCode("FINANCE");
+    scope.setScopeName("Finance Scope");
+    scope.setScopeType("RESOURCE");
+    scope.setStatus(1);
+    when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
+    when(resourceScopeUsageMapper.countOwnerReferences(9101L)).thenReturn(1L);
+    when(resourceScopeUsageMapper.countSharedReferences(9101L)).thenReturn(0L);
+
+    assertThatThrownBy(() -> resourceScopeService.delete(9101L))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("RESOURCE_SCOPE_IN_USE");
+
+    verify(resourceScopeMemberMapper, never()).deleteByScopeIdHard(9101L);
+    verify(resourceScopeMapper, never()).deleteByIdHard(9101L);
   }
 }

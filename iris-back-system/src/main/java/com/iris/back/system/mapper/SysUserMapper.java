@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.iris.back.system.model.entity.SysUserEntity;
 import com.iris.back.system.model.dto.AuthUserView;
 import java.util.List;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
@@ -38,4 +39,22 @@ public interface SysUserMapper extends BaseMapper<SysUserEntity> {
       ORDER BY r.id
       """)
   List<String> selectRoleCodesByUserId(@Param("tenantId") Long tenantId, @Param("userId") Long userId);
+
+  @Select("""
+      SELECT ur.role_id
+      FROM sys_user_role ur
+      INNER JOIN sys_role r ON r.id = ur.role_id
+      WHERE ur.tenant_id = #{tenantId}
+        AND ur.user_id = #{userId}
+        AND ur.deleted = 0
+        AND r.deleted = 0
+      ORDER BY r.id
+      """)
+  List<Long> selectRoleIdsByUserId(@Param("tenantId") Long tenantId, @Param("userId") Long userId);
+
+  @Delete("""
+      DELETE FROM sys_user
+      WHERE id = #{id}
+      """)
+  int deleteByIdHard(@Param("id") Long id);
 }

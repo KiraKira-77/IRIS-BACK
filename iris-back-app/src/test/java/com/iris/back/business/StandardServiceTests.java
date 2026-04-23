@@ -1,0 +1,351 @@
+package com.iris.back.business;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.iris.back.business.standard.mapper.BizStandardMapper;
+import com.iris.back.business.standard.model.entity.BizStandardEntity;
+import com.iris.back.business.standard.model.request.StandardUpsertRequest;
+import com.iris.back.business.standard.service.StandardService;
+import com.iris.back.common.exception.BusinessException;
+import com.iris.back.framework.security.CurrentUserContext;
+import com.iris.back.framework.security.CurrentUserPrincipal;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.mapper.SysResourceScopeMapper;
+import com.iris.back.system.model.dto.ResourceScopeMemberDto;
+import com.iris.back.system.model.entity.SysResourceScopeEntity;
+import java.time.LocalDate;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class StandardServiceTests {
+
+  @Mock
+  private BizStandardMapper standardMapper;
+
+  @Mock
+  private SysResourceScopeMapper resourceScopeMapper;
+
+  @Mock
+  private IdentifierGenerator identifierGenerator;
+
+  @Mock
+  private SysResourceScopeMemberMapper resourceScopeMemberMapper;
+
+  @Mock
+  private CurrentUserContext currentUserContext;
+
+  @InjectMocks
+  private StandardService standardService;
+
+  @Test
+  void listReturnsOnlyStandardsVisibleToCurrentUser() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+
+    BizStandardEntity entity = new BizStandardEntity();
+    entity.setId(9901L);
+    entity.setTenantId(1001L);
+    entity.setStandardGroupId("std-001");
+    entity.setTitle("Finance Baseline");
+    entity.setCategory("internal");
+    entity.setStandardVersion("V1.0");
+    entity.setVersionNumber(1);
+    entity.setPublishDate(LocalDate.of(2026, 4, 23));
+    entity.setStatus("active");
+    entity.setDescription("baseline");
+    entity.setVisibilityLevel("SCOPED");
+    entity.setOwnerScopeId(9001L);
+    entity.setSharedScopeIds("9002,9003");
+    entity.setTags("finance,internal-control");
+    BizStandardEntity hidden = new BizStandardEntity();
+    hidden.setId(9902L);
+    hidden.setTenantId(1001L);
+    hidden.setStandardGroupId("std-002");
+    hidden.setTitle("IT Restricted");
+    hidden.setCategory("internal");
+    hidden.setStandardVersion("V1.0");
+    hidden.setVersionNumber(1);
+    hidden.setPublishDate(LocalDate.of(2026, 4, 24));
+    hidden.setStatus("active");
+    hidden.setDescription("hidden");
+    hidden.setVisibilityLevel("SCOPED");
+    hidden.setOwnerScopeId(9010L);
+    hidden.setSharedScopeIds("9011");
+    hidden.setTags("it");
+    when(standardMapper.selectList(any())).thenReturn(List.of(entity, hidden));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0),
+        scopeMember(9002L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    var result = standardService.list();
+
+    assertThat(result).hasSize(1);
+    assertThat(result.getFirst().id()).isEqualTo("9901");
+    assertThat(result.getFirst().ownerScopeId()).isEqualTo("9001");
+    assertThat(result.getFirst().grants()).extracting(grant -> grant.scopeId() + ":" + grant.actions())
+        .containsExactly("9002:[view]", "9003:[view]");
+    assertThat(result.getFirst().tags()).containsExactly("finance", "internal-control");
+  }
+
+  @Test
+  void createAssignsGeneratedIdAndPersistsPermissionFields() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMapper.selectById(9002L)).thenReturn(scope(9002L, 1001L));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+    when(identifierGenerator.nextId(any())).thenReturn(9902L);
+
+    var created = standardService.create(new StandardUpsertRequest(
+        1001L,
+        "Finance Standard",
+        "internal",
+        "V1.0",
+        "draft",
+        "2026-04-23",
+        "standard description",
+        List.of("finance", "internal-control"),
+        null,
+        null,
+        null,
+        "PUBLIC",
+        "9001",
+        List.of("9002"),
+        "initial draft"
+    ));
+
+    ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
+    verify(standardMapper).insert(captor.capture());
+
+    assertThat(created.id()).isEqualTo("9902");
+    assertThat(created.standardGroupId()).isEqualTo("9902");
+    assertThat(created.ownerScopeId()).isEqualTo("9001");
+    assertThat(created.visibilityLevel()).isEqualTo("PUBLIC");
+    assertThat(created.grants()).extracting(grant -> grant.scopeId()).containsExactly("9002");
+    assertThat(captor.getValue().getSharedScopeIds()).isEqualTo("9002");
+    assertThat(captor.getValue().getTags()).isEqualTo("finance,internal-control");
+  }
+
+  @Test
+  void createNormalizesGrantedScopesAgainstOwnerAndDuplicates() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMapper.selectById(9002L)).thenReturn(scope(9002L, 1001L));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+    when(identifierGenerator.nextId(any())).thenReturn(9903L);
+
+    standardService.create(new StandardUpsertRequest(
+        1001L,
+        "Finance Standard",
+        "internal",
+        "V1.0",
+        "draft",
+        null,
+        "standard description",
+        List.of("finance"),
+        null,
+        null,
+        null,
+        "SCOPED",
+        "9001",
+        List.of("9001", "9002", "9002"),
+        "initial draft"
+    ));
+
+    ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
+    verify(standardMapper).insert(captor.capture());
+    assertThat(captor.getValue().getSharedScopeIds()).isEqualTo("9002");
+  }
+
+  @Test
+  void createRejectsUnknownGrantedScope() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMapper.selectById(9009L)).thenReturn(null);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+    when(identifierGenerator.nextId(any())).thenReturn(9904L);
+
+    assertThatThrownBy(() -> standardService.create(new StandardUpsertRequest(
+        1001L,
+        "Finance Standard",
+        "internal",
+        "V1.0",
+        "draft",
+        null,
+        "standard description",
+        List.of("finance"),
+        null,
+        null,
+        null,
+        "SCOPED",
+        "9001",
+        List.of("9009"),
+        "initial draft"
+    )))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("RESOURCE_SCOPE_NOT_FOUND");
+
+    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  @Test
+  void createRejectsGrantedScopeFromAnotherTenant() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMapper.selectById(9002L)).thenReturn(scope(9002L, 2002L));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+    when(identifierGenerator.nextId(any())).thenReturn(9905L);
+
+    assertThatThrownBy(() -> standardService.create(new StandardUpsertRequest(
+        1001L,
+        "Finance Standard",
+        "internal",
+        "V1.0",
+        "draft",
+        null,
+        "standard description",
+        List.of("finance"),
+        null,
+        null,
+        null,
+        "SCOPED",
+        "9001",
+        List.of("9002"),
+        "initial draft"
+    )))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("RESOURCE_SCOPE_TENANT_MISMATCH");
+
+    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  @Test
+  void createRejectsUserWithoutCreatePermissionOnOwnerScope() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> standardService.create(new StandardUpsertRequest(
+        1001L,
+        "Finance Standard",
+        "internal",
+        "V1.0",
+        "draft",
+        null,
+        "standard description",
+        List.of("finance"),
+        null,
+        null,
+        null,
+        "SCOPED",
+        "9001",
+        List.of(),
+        "initial draft"
+    ))).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+
+    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  @Test
+  void createRejectsSharedOnlyScopeAsOwnerScope() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    when(resourceScopeMapper.selectById(9008L)).thenReturn(scope(9008L, 1001L, "STANDARD"));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9008L, 2002L, 1, 1, 1, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> standardService.create(new StandardUpsertRequest(
+        1001L,
+        "Shared Scope Standard",
+        "internal",
+        "V1.0",
+        "draft",
+        null,
+        "standard description",
+        List.of("finance"),
+        null,
+        null,
+        null,
+        "SCOPED",
+        "9008",
+        List.of(),
+        "initial draft"
+    )))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("RESOURCE_SCOPE_OWNER_TYPE_INVALID");
+
+    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  private SysResourceScopeEntity scope(Long id, Long tenantId) {
+    return scope(id, tenantId, "RESOURCE");
+  }
+
+  private SysResourceScopeEntity scope(Long id, Long tenantId, String scopeType) {
+    SysResourceScopeEntity entity = new SysResourceScopeEntity();
+    entity.setId(id);
+    entity.setTenantId(tenantId);
+    entity.setScopeType(scopeType);
+    return entity;
+  }
+
+  private ResourceScopeMemberDto scopeMember(
+      Long scopeId,
+      Long userId,
+      Integer canView,
+      Integer canCreate,
+      Integer canEdit,
+      Integer canDelete,
+      Integer canManage
+  ) {
+    return new ResourceScopeMemberDto(
+        "1",
+        String.valueOf(scopeId),
+        String.valueOf(userId),
+        "user",
+        "User",
+        canView,
+        canCreate,
+        canEdit,
+        canDelete,
+        canManage,
+        "test"
+    );
+  }
+
+  private void mockCurrentUser(Long userId, List<String> roles) {
+    when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
+        "token",
+        userId,
+        1001L,
+        "user",
+        "User",
+        "IRIS",
+        roles
+    ));
+  }
+}

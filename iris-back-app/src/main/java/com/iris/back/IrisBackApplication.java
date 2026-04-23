@@ -5,7 +5,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-@MapperScan("com.iris.back.system.mapper")
+@MapperScan({
+    "com.iris.back.system.mapper",
+    "com.iris.back.business.standard.mapper"
+})
 public class IrisBackApplication {
 
   public static void main(String[] args) {

@@ -1,0 +1,167 @@
+package com.iris.back.business;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.iris.back.auth.service.AuthService;
+import com.iris.back.business.standard.mapper.BizStandardMapper;
+import com.iris.back.business.standard.model.dto.StandardDto;
+import com.iris.back.business.standard.service.StandardService;
+import com.iris.back.framework.security.AuthSessionStore;
+import com.iris.back.system.mapper.SysOrgMapper;
+import com.iris.back.system.mapper.SysResourceScopeMapper;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
+import com.iris.back.system.mapper.SysRoleMenuMapper;
+import com.iris.back.system.mapper.SysRoleMapper;
+import com.iris.back.system.mapper.SysTenantMapper;
+import com.iris.back.system.mapper.SysUserMapper;
+import com.iris.back.system.mapper.SysUserRoleMapper;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.web.servlet.MockMvc;
+
+@SpringBootTest(properties = {
+    "spring.autoconfigure.exclude="
+        + "org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,"
+        + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration,"
+        + "org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,"
+        + "com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration"
+})
+@AutoConfigureMockMvc
+class StandardControllerTests {
+
+  @Autowired
+  private MockMvc mockMvc;
+
+  @MockBean
+  private SysTenantMapper tenantMapper;
+
+  @MockBean
+  private SysOrgMapper orgMapper;
+
+  @MockBean
+  private SysUserMapper userMapper;
+
+  @MockBean
+  private SysUserRoleMapper userRoleMapper;
+
+  @MockBean
+  private SysRoleMapper roleMapper;
+
+  @MockBean
+  private SysRoleMenuMapper roleMenuMapper;
+
+  @MockBean
+  private SysResourceScopeMapper resourceScopeMapper;
+
+  @MockBean
+  private SysResourceScopeMemberMapper resourceScopeMemberMapper;
+
+  @MockBean
+  private SysResourceScopeUsageMapper resourceScopeUsageMapper;
+
+  @MockBean
+  private AuthSessionStore authSessionStore;
+
+  @MockBean
+  private AuthService authService;
+
+  @MockBean
+  private StandardService standardService;
+
+  @MockBean
+  private BizStandardMapper bizStandardMapper;
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void listReturnsRealStandardPayload() throws Exception {
+    when(standardService.list()).thenReturn(List.of(new StandardDto(
+        "9901",
+        "std-001",
+        "Finance Standard",
+        "internal",
+        "V1.0",
+        "2026-04-23",
+        "active",
+        List.of(),
+        List.of("内控"),
+        "desc",
+        "2026-04-23T00:00:00",
+        "2026-04-23T00:00:00",
+        1,
+        null,
+        "SCOPED",
+        "9001",
+        List.of(new StandardDto.ScopeGrantDto("9002", List.of("view"))),
+        "initial draft"
+    )));
+
+    mockMvc.perform(get("/api/v1/standards"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data[0].title").value("Finance Standard"))
+        .andExpect(jsonPath("$.data[0].visibilityLevel").value("SCOPED"))
+        .andExpect(jsonPath("$.data[0].ownerScopeId").value("9001"))
+        .andExpect(jsonPath("$.data[0].grants[0].scopeId").value("9002"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void createReturnsCreatedStandardPayload() throws Exception {
+    when(standardService.create(any())).thenReturn(new StandardDto(
+        "9902",
+        "9902",
+        "Finance Standard",
+        "internal",
+        "V1.0",
+        "2026-04-23",
+        "draft",
+        List.of(),
+        List.of("内控"),
+        "desc",
+        "2026-04-23T00:00:00",
+        "2026-04-23T00:00:00",
+        1,
+        null,
+        "PUBLIC",
+        "9001",
+        List.of(new StandardDto.ScopeGrantDto("9002", List.of("view"))),
+        "initial draft"
+    ));
+
+    mockMvc.perform(post("/api/v1/standards")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "tenantId": 1001,
+                  "title": "Finance Standard",
+                  "category": "internal",
+                  "version": "V1.0",
+                  "status": "draft",
+                  "publishDate": "2026-04-23",
+                  "description": "desc",
+                  "tags": ["内控"],
+                  "visibilityLevel": "PUBLIC",
+                  "ownerScopeId": "9001",
+                  "grantScopeIds": ["9002"],
+                  "changeLog": "initial draft"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data.id").value("9902"))
+        .andExpect(jsonPath("$.data.ownerScopeId").value("9001"))
+        .andExpect(jsonPath("$.data.grants[0].scopeId").value("9002"));
+  }
+}

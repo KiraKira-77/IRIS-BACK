@@ -27,7 +27,7 @@ ON DUPLICATE KEY UPDATE
 INSERT INTO sys_user (
   id, tenant_id, org_id, account, username, password_hash, email, mobile, status, remark, deleted, version, created_by, updated_by
 ) VALUES (
-  2001, 1001, 1101, 'admin', 'Platform Administrator', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5a5y9N8MaqkOawx2UY8ailqXF/w3v9e', 'admin@iris.local', '13800000000', 1, 'Bootstrap admin user', 0, 0, 2001, 2001
+  2001, 1001, 1101, 'admin', 'Platform Administrator', '$2a$10$Ak9ZwaN41jdqAdEXZrHj/uSxgXcgFKslD71EunlAecIBvtggwglwe', 'admin@iris.local', '13800000000', 1, 'Bootstrap admin user', 0, 0, 2001, 2001
 )
 ON DUPLICATE KEY UPDATE
   username = VALUES(username),
@@ -42,9 +42,9 @@ ON DUPLICATE KEY UPDATE
 INSERT INTO sys_user (
   id, tenant_id, org_id, account, username, password_hash, email, mobile, status, remark, deleted, version, created_by, updated_by
 ) VALUES
-  (2002, 1001, 1101, 'finance_mgr', 'Finance Manager', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5a5y9N8MaqkOawx2UY8ailqXF/w3v9e', 'finance@iris.local', '13800000001', 1, 'Finance scope manager', 0, 0, 2001, 2001),
-  (2003, 1001, 1101, 'it_mgr', 'IT Manager', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5a5y9N8MaqkOawx2UY8ailqXF/w3v9e', 'it@iris.local', '13800000002', 1, 'IT scope manager', 0, 0, 2001, 2001),
-  (2004, 1001, 1101, 'auditor_1', 'Senior Auditor', '$2a$10$7EqJtq98hPqEX7fNZaFWoO5a5y9N8MaqkOawx2UY8ailqXF/w3v9e', 'auditor@iris.local', '13800000003', 1, 'Read-only auditor user', 0, 0, 2001, 2001)
+  (2002, 1001, 1101, 'finance_mgr', 'Finance Manager', '$2a$10$Ak9ZwaN41jdqAdEXZrHj/uSxgXcgFKslD71EunlAecIBvtggwglwe', 'finance@iris.local', '13800000001', 1, 'Finance scope manager', 0, 0, 2001, 2001),
+  (2003, 1001, 1101, 'it_mgr', 'IT Manager', '$2a$10$Ak9ZwaN41jdqAdEXZrHj/uSxgXcgFKslD71EunlAecIBvtggwglwe', 'it@iris.local', '13800000002', 1, 'IT scope manager', 0, 0, 2001, 2001),
+  (2004, 1001, 1101, 'auditor_1', 'Senior Auditor', '$2a$10$Ak9ZwaN41jdqAdEXZrHj/uSxgXcgFKslD71EunlAecIBvtggwglwe', 'auditor@iris.local', '13800000003', 1, 'Read-only auditor user', 0, 0, 2001, 2001)
 ON DUPLICATE KEY UPDATE
   username = VALUES(username),
   password_hash = VALUES(password_hash),
@@ -59,7 +59,8 @@ INSERT INTO sys_role (
   id, tenant_id, role_code, role_name, scope_type, status, remark, deleted, version, created_by, updated_by
 ) VALUES
   (3001, 1001, 'PLATFORM_ADMIN', 'Platform Administrator', 'PLATFORM', 1, 'Platform-level super role', 0, 0, 2001, 2001),
-  (3002, 1001, 'TENANT_ADMIN', 'Tenant Administrator', 'TENANT', 1, 'Tenant-level admin role', 0, 0, 2001, 2001)
+  (3002, 1001, 'TENANT_ADMIN', 'Tenant Administrator', 'TENANT', 1, 'Tenant-level admin role', 0, 0, 2001, 2001),
+  (3003, 1001, 'AUDITOR', 'Auditor', 'TENANT', 1, 'Read-only auditor role', 0, 0, 2001, 2001)
 ON DUPLICATE KEY UPDATE
   role_name = VALUES(role_name),
   scope_type = VALUES(scope_type),
@@ -89,7 +90,10 @@ INSERT INTO sys_user_role (
   id, tenant_id, user_id, role_id, remark, deleted, version, created_by, updated_by
 ) VALUES
   (5001, 1001, 2001, 3001, 'Bootstrap admin role binding', 0, 0, 2001, 2001),
-  (5002, 1001, 2001, 3002, 'Bootstrap tenant admin role binding', 0, 0, 2001, 2001)
+  (5002, 1001, 2001, 3002, 'Bootstrap tenant admin role binding', 0, 0, 2001, 2001),
+  (5003, 1001, 2002, 3002, 'Finance admin role binding', 0, 0, 2001, 2001),
+  (5004, 1001, 2003, 3002, 'IT admin role binding', 0, 0, 2001, 2001),
+  (5005, 1001, 2004, 3003, 'Auditor role binding', 0, 0, 2001, 2001)
 ON DUPLICATE KEY UPDATE
   remark = VALUES(remark),
   updated_by = VALUES(updated_by),
@@ -102,6 +106,59 @@ INSERT INTO sys_role_permission (
   (6002, 1001, 3001, 4002, 'Bootstrap binding', 0, 0, 2001, 2001),
   (6003, 1001, 3001, 4003, 'Bootstrap binding', 0, 0, 2001, 2001),
   (6004, 1001, 3001, 4004, 'Bootstrap binding', 0, 0, 2001, 2001)
+ON DUPLICATE KEY UPDATE
+  remark = VALUES(remark),
+  updated_by = VALUES(updated_by),
+  updated_at = CURRENT_TIMESTAMP;
+
+INSERT INTO sys_role_menu (
+  id, tenant_id, role_id, menu_code, remark, deleted, version, created_by, updated_by
+) VALUES
+  (6101, 1001, 3001, 'workbench.dashboard', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6102, 1001, 3001, 'workbench.alerts', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6103, 1001, 3001, 'workbench.logs', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6104, 1001, 3001, 'resource.standards', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6105, 1001, 3001, 'resource.scopes', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6106, 1001, 3001, 'resource.checklists', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6107, 1001, 3001, 'resource.archives', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6108, 1001, 3001, 'resource.personnel', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6109, 1001, 3001, 'plan.create', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6110, 1001, 3001, 'plan.list', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6111, 1001, 3001, 'plan.overview', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6112, 1001, 3001, 'project.list', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6113, 1001, 3001, 'project.create', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6114, 1001, 3001, 'rectification.list', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6115, 1001, 3001, 'rectification.create', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6116, 1001, 3001, 'smart.analysis', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6117, 1001, 3001, 'smart.rules', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6118, 1001, 3001, 'smart.models', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6119, 1001, 3001, 'smart.tools', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6120, 1001, 3001, 'system.roles', 'Platform admin menu', 0, 0, 2001, 2001),
+  (6121, 1001, 3002, 'workbench.dashboard', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6122, 1001, 3002, 'resource.standards', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6123, 1001, 3002, 'resource.scopes', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6124, 1001, 3002, 'resource.checklists', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6125, 1001, 3002, 'resource.archives', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6126, 1001, 3002, 'resource.personnel', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6127, 1001, 3002, 'plan.create', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6128, 1001, 3002, 'plan.list', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6129, 1001, 3002, 'plan.overview', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6130, 1001, 3002, 'project.list', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6131, 1001, 3002, 'project.create', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6132, 1001, 3002, 'rectification.list', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6133, 1001, 3002, 'rectification.create', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6134, 1001, 3002, 'smart.analysis', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6135, 1001, 3002, 'smart.rules', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6136, 1001, 3002, 'system.roles', 'Tenant admin menu', 0, 0, 2001, 2001),
+  (6137, 1001, 3003, 'workbench.dashboard', 'Auditor menu', 0, 0, 2001, 2001),
+  (6138, 1001, 3003, 'resource.standards', 'Auditor menu', 0, 0, 2001, 2001),
+  (6139, 1001, 3003, 'resource.checklists', 'Auditor menu', 0, 0, 2001, 2001),
+  (6140, 1001, 3003, 'resource.archives', 'Auditor menu', 0, 0, 2001, 2001),
+  (6141, 1001, 3003, 'plan.list', 'Auditor menu', 0, 0, 2001, 2001),
+  (6142, 1001, 3003, 'plan.overview', 'Auditor menu', 0, 0, 2001, 2001),
+  (6143, 1001, 3003, 'project.list', 'Auditor menu', 0, 0, 2001, 2001),
+  (6144, 1001, 3003, 'rectification.list', 'Auditor menu', 0, 0, 2001, 2001),
+  (6145, 1001, 3003, 'smart.analysis', 'Auditor menu', 0, 0, 2001, 2001)
 ON DUPLICATE KEY UPDATE
   remark = VALUES(remark),
   updated_by = VALUES(updated_by),
@@ -136,6 +193,38 @@ ON DUPLICATE KEY UPDATE
   can_edit = VALUES(can_edit),
   can_delete = VALUES(can_delete),
   can_manage = VALUES(can_manage),
+  remark = VALUES(remark),
+  updated_by = VALUES(updated_by),
+  updated_at = CURRENT_TIMESTAMP;
+
+INSERT INTO biz_standard (
+  id, tenant_id, standard_group_id, title, category, standard_version, version_number, previous_version_id,
+  publish_date, status, description, tags, visibility_level, owner_scope_id, shared_scope_ids, change_log, remark,
+  deleted, version, created_by, updated_by
+) VALUES
+  (9901, 1001, 'std-001', 'Finance Standard Baseline', 'internal', 'V1.0', 1, NULL,
+   '2026-04-23', 'active', 'Finance-owned internal control baseline', '内控,财务', 'PUBLIC', 9001, '9002', 'Initial release',
+   'Finance baseline seed data', 0, 0, 2001, 2001),
+  (9902, 1001, 'std-002', 'IT Security Checklist Standard', 'system', 'V1.0', 1, NULL,
+   '2026-04-23', 'active', 'IT-owned security standard', '信息安全,IT审计', 'SCOPED', 9002, '9003', 'Initial release',
+   'IT security seed data', 0, 0, 2001, 2001),
+  (9903, 1001, 'std-003', 'Compliance Review Procedure', 'industry', 'V1.0', 1, NULL,
+   '2026-04-23', 'draft', 'Compliance review draft', '合规', 'SCOPED', 9003, NULL, 'Draft created',
+   'Compliance draft seed data', 0, 0, 2001, 2001)
+ON DUPLICATE KEY UPDATE
+  title = VALUES(title),
+  category = VALUES(category),
+  standard_version = VALUES(standard_version),
+  version_number = VALUES(version_number),
+  previous_version_id = VALUES(previous_version_id),
+  publish_date = VALUES(publish_date),
+  status = VALUES(status),
+  description = VALUES(description),
+  tags = VALUES(tags),
+  visibility_level = VALUES(visibility_level),
+  owner_scope_id = VALUES(owner_scope_id),
+  shared_scope_ids = VALUES(shared_scope_ids),
+  change_log = VALUES(change_log),
   remark = VALUES(remark),
   updated_by = VALUES(updated_by),
   updated_at = CURRENT_TIMESTAMP;

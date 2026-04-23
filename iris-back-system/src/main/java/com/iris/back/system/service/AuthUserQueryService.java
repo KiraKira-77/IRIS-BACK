@@ -3,6 +3,8 @@ package com.iris.back.system.service;
 import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.model.dto.AuthUserView;
 import java.util.Optional;
+
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -22,4 +24,8 @@ public class AuthUserQueryService {
     user.setRoles(sysUserMapper.selectRoleCodesByUserId(user.getTenantId(), user.getUserId()));
     return Optional.of(user);
   }
+
+    public static void main(String[] args) {
+        System.out.println(new BCryptPasswordEncoder().encode("admin123"));
+    }
 }

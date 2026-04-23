@@ -1,9 +1,9 @@
 package com.iris.back.system.model.dto;
 
 public record ResourceScopeMemberDto(
-    Long id,
-    Long scopeId,
-    Long userId,
+    String id,
+    String scopeId,
+    String userId,
     String account,
     String username,
     Integer canView,

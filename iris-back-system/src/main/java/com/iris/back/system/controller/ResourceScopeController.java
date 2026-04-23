@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -60,6 +61,12 @@ public class ResourceScopeController {
       @Valid @RequestBody ResourceScopeMemberReplaceRequest request
   ) {
     resourceScopeService.replaceMembers(id, request);
-    return ApiResponse.success("resource scope members updated");
+    return ApiResponse.success("resource scope members updated", null);
+  }
+
+  @DeleteMapping("/{id}")
+  public ApiResponse<Void> delete(@PathVariable Long id) {
+    resourceScopeService.delete(id);
+    return ApiResponse.success("resource scope deleted", null);
   }
 }

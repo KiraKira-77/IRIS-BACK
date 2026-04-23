@@ -1,14 +1,18 @@
 package com.iris.back.system.model.dto;
 
+import java.util.List;
+
 public record UserDto(
-    Long id,
-    Long tenantId,
-    Long orgId,
+    String id,
+    String tenantId,
+    String orgId,
     String account,
     String username,
     String email,
     String mobile,
     Integer status,
-    String remark
+    String remark,
+    List<String> roleIds,
+    List<String> roleCodes
 ) {
 }

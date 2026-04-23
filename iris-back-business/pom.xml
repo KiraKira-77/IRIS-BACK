@@ -25,5 +25,10 @@
       <artifactId>iris-back-framework</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <dependency>
+      <groupId>com.iris</groupId>
+      <artifactId>iris-back-system</artifactId>
+      <version>${project.version}</version>
+    </dependency>
   </dependencies>
 </project>

@@ -109,6 +109,80 @@ class StandardServiceTests {
   }
 
   @Test
+  void listHidesDraftCreatedByAnotherUser() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+
+    BizStandardEntity ownVisible = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    ownVisible.setTitle("Visible Active");
+    ownVisible.setCategory("internal");
+    ownVisible.setStatus("active");
+    ownVisible.setVisibilityLevel("SCOPED");
+    ownVisible.setOwnerScopeId(9001L);
+    ownVisible.setUpdatedBy(2004L);
+
+    BizStandardEntity othersDraft = standard(9902L, "group-2", "STD-FIN-002", "V1.0", 1, null);
+    othersDraft.setTitle("Others Draft");
+    othersDraft.setCategory("internal");
+    othersDraft.setStatus("draft");
+    othersDraft.setVisibilityLevel("SCOPED");
+    othersDraft.setOwnerScopeId(9001L);
+    othersDraft.setCreatedBy(2002L);
+    othersDraft.setUpdatedBy(2002L);
+
+    when(standardMapper.selectList(any())).thenReturn(List.of(ownVisible, othersDraft));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0)
+    ));
+    when(userMapper.selectBatchIds(List.of(2004L))).thenReturn(List.of(user(2004L, "Senior Auditor")));
+
+    var result = standardService.list();
+
+    assertThat(result).extracting(item -> item.id()).containsExactly("9901");
+  }
+
+  @Test
+  void getRejectsDraftCreatedByAnotherUser() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+
+    BizStandardEntity othersDraft = standard(9902L, "group-2", "STD-FIN-002", "V1.0", 1, null);
+    othersDraft.setTitle("Others Draft");
+    othersDraft.setCategory("internal");
+    othersDraft.setStatus("draft");
+    othersDraft.setVisibilityLevel("SCOPED");
+    othersDraft.setOwnerScopeId(9001L);
+    othersDraft.setCreatedBy(2002L);
+    othersDraft.setUpdatedBy(2002L);
+    when(standardMapper.selectById(9902L)).thenReturn(othersDraft);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> standardService.get("9902"))
+        .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+  }
+
+  @Test
+  void superAdminCanViewDraftCreatedByAnotherUser() {
+    mockCurrentUser(2001L, List.of("SUPER_ADMIN"));
+
+    BizStandardEntity othersDraft = standard(9902L, "group-2", "STD-FIN-002", "V1.0", 1, null);
+    othersDraft.setTitle("Others Draft");
+    othersDraft.setCategory("internal");
+    othersDraft.setStatus("draft");
+    othersDraft.setVisibilityLevel("SCOPED");
+    othersDraft.setOwnerScopeId(9001L);
+    othersDraft.setCreatedBy(2002L);
+    othersDraft.setUpdatedBy(2002L);
+    when(standardMapper.selectList(any())).thenReturn(List.of(othersDraft));
+    when(userMapper.selectBatchIds(List.of(2002L))).thenReturn(List.of(user(2002L, "Finance Manager")));
+
+    var result = standardService.list();
+
+    assertThat(result).hasSize(1);
+    assertThat(result.getFirst().id()).isEqualTo("9902");
+  }
+
+  @Test
   void createAssignsGeneratedIdAndPersistsPermissionFields() {
     mockCurrentUser(2002L, List.of("AUDITOR"));
     when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));

@@ -366,7 +366,7 @@ public class StandardService {
 
   private StandardPermissionContext buildPermissionContext(CurrentUserPrincipal principal) {
     if (isSuperAdmin(principal)) {
-      return new StandardPermissionContext(true, Map.of());
+      return new StandardPermissionContext(true, principal.userId(), Map.of());
     }
 
     Map<String, ResourceScopeMemberDto> memberships = resourceScopeMemberMapper
@@ -374,12 +374,15 @@ public class StandardService {
         .stream()
         .collect(Collectors.toMap(ResourceScopeMemberDto::scopeId, member -> member, (left, right) -> left));
 
-    return new StandardPermissionContext(false, memberships);
+    return new StandardPermissionContext(false, principal.userId(), memberships);
   }
 
   private boolean canView(BizStandardEntity entity, StandardPermissionContext permissionContext) {
     if (permissionContext.superAdmin()) {
       return true;
+    }
+    if (isDraft(entity) && !Objects.equals(entity.getCreatedBy(), permissionContext.userId())) {
+      return false;
     }
     if ("PUBLIC".equalsIgnoreCase(entity.getVisibilityLevel())) {
       return true;
@@ -479,6 +482,10 @@ public class StandardService {
     return flag(member.canManage());
   }
 
+  private boolean isDraft(BizStandardEntity entity) {
+    return "draft".equalsIgnoreCase(entity.getStatus());
+  }
+
   private boolean flag(Integer value) {
     return Integer.valueOf(1).equals(value);
   }
@@ -497,6 +504,7 @@ public class StandardService {
 
   private record StandardPermissionContext(
       boolean superAdmin,
+      Long userId,
       Map<String, ResourceScopeMemberDto> memberships
   ) {
   }

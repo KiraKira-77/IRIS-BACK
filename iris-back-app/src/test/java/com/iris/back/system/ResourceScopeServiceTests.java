@@ -56,7 +56,7 @@ class ResourceScopeServiceTests {
     when(identifierGenerator.nextId(any())).thenReturn(9101001L);
 
     var created = resourceScopeService.create(new ResourceScopeUpsertRequest(
-        1001L, "FINANCE", "Finance Scope", "RESOURCE", 1, "created in test"
+        1001L, "FINANCE", "Finance Scope", 1, "created in test"
     ));
 
     ArgumentCaptor<SysResourceScopeEntity> captor = ArgumentCaptor.forClass(SysResourceScopeEntity.class);
@@ -77,7 +77,7 @@ class ResourceScopeServiceTests {
     ));
 
     var created = resourceScopeService.create(new ResourceScopeUpsertRequest(
-        1001L, " ", "Generated Scope", "RESOURCE", 1, "created in test"
+        1001L, " ", "Generated Scope", 1, "created in test"
     ));
 
     ArgumentCaptor<SysResourceScopeEntity> captor = ArgumentCaptor.forClass(SysResourceScopeEntity.class);
@@ -91,12 +91,11 @@ class ResourceScopeServiceTests {
   void updateKeepsExistingScopeCodeWhenBlank() {
     SysResourceScopeEntity scope = scope(9101L, 1001L, "RS0007");
     scope.setScopeName("Finance Scope");
-    scope.setScopeType("RESOURCE");
     scope.setStatus(1);
     when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
 
     var updated = resourceScopeService.update(9101L, new ResourceScopeUpsertRequest(
-        1001L, "", "Updated Scope", "STANDARD", 0, "updated in test"
+        1001L, "", "Updated Scope", 0, "updated in test"
     ));
 
     ArgumentCaptor<SysResourceScopeEntity> captor = ArgumentCaptor.forClass(SysResourceScopeEntity.class);
@@ -105,7 +104,6 @@ class ResourceScopeServiceTests {
     assertThat(updated.scopeCode()).isEqualTo("RS0007");
     assertThat(updated.scopeName()).isEqualTo("Updated Scope");
     assertThat(captor.getValue().getScopeCode()).isEqualTo("RS0007");
-    assertThat(captor.getValue().getScopeType()).isEqualTo("STANDARD");
     assertThat(captor.getValue().getStatus()).isEqualTo(0);
   }
 
@@ -116,7 +114,6 @@ class ResourceScopeServiceTests {
     scope.setTenantId(1001L);
     scope.setScopeCode("FINANCE");
     scope.setScopeName("Finance Scope");
-    scope.setScopeType("RESOURCE");
     scope.setStatus(1);
     when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
     when(identifierGenerator.nextId(any()))
@@ -177,7 +174,6 @@ class ResourceScopeServiceTests {
     scope.setTenantId(1001L);
     scope.setScopeCode("FINANCE");
     scope.setScopeName("Finance Scope");
-    scope.setScopeType("RESOURCE");
     scope.setStatus(1);
     when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
     when(identifierGenerator.nextId(any()))
@@ -205,7 +201,6 @@ class ResourceScopeServiceTests {
     scope.setTenantId(1001L);
     scope.setScopeCode("FINANCE");
     scope.setScopeName("Finance Scope");
-    scope.setScopeType("RESOURCE");
     scope.setStatus(1);
     when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
     when(resourceScopeUsageMapper.countOwnerReferences(9101L)).thenReturn(0L);
@@ -224,7 +219,6 @@ class ResourceScopeServiceTests {
     scope.setTenantId(1001L);
     scope.setScopeCode("FINANCE");
     scope.setScopeName("Finance Scope");
-    scope.setScopeType("RESOURCE");
     scope.setStatus(1);
     when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
     when(resourceScopeUsageMapper.countOwnerReferences(9101L)).thenReturn(1L);

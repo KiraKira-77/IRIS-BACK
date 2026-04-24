@@ -149,7 +149,6 @@ CREATE TABLE IF NOT EXISTS sys_resource_scope (
   tenant_id BIGINT NOT NULL,
   scope_code VARCHAR(64) NOT NULL,
   scope_name VARCHAR(128) NOT NULL,
-  scope_type VARCHAR(32) NOT NULL DEFAULT 'RESOURCE',
   status TINYINT NOT NULL DEFAULT 1,
   remark VARCHAR(500) NULL,
   deleted TINYINT NOT NULL DEFAULT 0,

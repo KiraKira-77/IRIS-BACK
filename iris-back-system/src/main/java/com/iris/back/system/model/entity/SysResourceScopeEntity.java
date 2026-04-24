@@ -7,7 +7,6 @@ import com.iris.back.common.model.BaseEntity;
 public class SysResourceScopeEntity extends BaseEntity {
   private String scopeCode;
   private String scopeName;
-  private String scopeType;
   private Integer status;
 
   public String getScopeCode() {
@@ -24,14 +23,6 @@ public class SysResourceScopeEntity extends BaseEntity {
 
   public void setScopeName(String scopeName) {
     this.scopeName = scopeName;
-  }
-
-  public String getScopeType() {
-    return scopeType;
-  }
-
-  public void setScopeType(String scopeType) {
-    this.scopeType = scopeType;
   }
 
   public Integer getStatus() {

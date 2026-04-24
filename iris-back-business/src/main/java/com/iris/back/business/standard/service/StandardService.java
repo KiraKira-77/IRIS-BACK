@@ -304,14 +304,7 @@ public class StandardService {
   }
 
   private SysResourceScopeEntity requireOwnerScope(Long scopeId, Long tenantId) {
-    SysResourceScopeEntity entity = requireScope(scopeId, tenantId);
-    if (!"RESOURCE".equalsIgnoreCase(entity.getScopeType())) {
-      throw new BusinessException(
-          "RESOURCE_SCOPE_OWNER_TYPE_INVALID",
-          "resource scope cannot be used as owner scope: " + scopeId
-      );
-    }
-    return entity;
+    return requireScope(scopeId, tenantId);
   }
 
   private Long parseId(String value) {

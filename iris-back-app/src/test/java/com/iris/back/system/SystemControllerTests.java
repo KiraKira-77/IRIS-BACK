@@ -146,7 +146,6 @@ class SystemControllerTests {
     entity.setTenantId(1001L);
     entity.setScopeCode("FINANCE");
     entity.setScopeName("Finance Scope");
-    entity.setScopeType("RESOURCE");
     entity.setStatus(1);
     when(resourceScopeMapper.selectList(null)).thenReturn(List.of(entity));
 
@@ -231,7 +230,6 @@ class SystemControllerTests {
                   "tenantId": 1001,
                   "scopeCode": "IT",
                   "scopeName": "IT Scope",
-                  "scopeType": "RESOURCE",
                   "status": 1,
                   "remark": "Created from test"
                 }
@@ -253,7 +251,6 @@ class SystemControllerTests {
                   "tenantId": 1001,
                   "scopeCode": "",
                   "scopeName": "Generated Scope",
-                  "scopeType": "RESOURCE",
                   "status": 1,
                   "remark": "Created from test"
                 }
@@ -318,7 +315,6 @@ class SystemControllerTests {
     entity.setTenantId(1001L);
     entity.setScopeCode("FINANCE");
     entity.setScopeName("Finance Scope");
-    entity.setScopeType("RESOURCE");
     entity.setStatus(1);
     when(resourceScopeMapper.selectById(9101L)).thenReturn(entity);
     when(resourceScopeUsageMapper.countOwnerReferences(9101L)).thenReturn(0L);
@@ -335,7 +331,6 @@ class SystemControllerTests {
     entity.setTenantId(tenantId);
     entity.setScopeCode(scopeCode);
     entity.setScopeName("Scope " + scopeCode);
-    entity.setScopeType("RESOURCE");
     entity.setStatus(1);
     return entity;
   }

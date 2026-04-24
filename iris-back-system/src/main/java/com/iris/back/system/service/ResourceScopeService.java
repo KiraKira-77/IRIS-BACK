@@ -118,7 +118,6 @@ public class ResourceScopeService {
     entity.setTenantId(request.tenantId());
     entity.setScopeCode(resolveScopeCode(request.tenantId(), request.scopeCode(), fallbackScopeCode));
     entity.setScopeName(request.scopeName());
-    entity.setScopeType(request.scopeType());
     entity.setStatus(request.status());
     entity.setRemark(request.remark());
   }
@@ -221,7 +220,6 @@ public class ResourceScopeService {
         stringify(entity.getTenantId()),
         entity.getScopeCode(),
         entity.getScopeName(),
-        entity.getScopeType(),
         entity.getStatus(),
         entity.getRemark()
     );

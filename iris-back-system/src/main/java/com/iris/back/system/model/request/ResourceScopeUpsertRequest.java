@@ -7,7 +7,6 @@ public record ResourceScopeUpsertRequest(
     @NotNull(message = "must not be null") Long tenantId,
     String scopeCode,
     @NotBlank(message = "must not be blank") String scopeName,
-    @NotBlank(message = "must not be blank") String scopeType,
     @NotNull(message = "must not be null") Integer status,
     String remark
 ) {

@@ -5,7 +5,6 @@ public record ResourceScopeDto(
     String tenantId,
     String scopeCode,
     String scopeName,
-    String scopeType,
     Integer status,
     String remark
 ) {

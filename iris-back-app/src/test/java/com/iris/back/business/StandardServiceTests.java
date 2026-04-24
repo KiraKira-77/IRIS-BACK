@@ -422,14 +422,15 @@ class StandardServiceTests {
   }
 
   @Test
-  void createRejectsSharedOnlyScopeAsOwnerScope() {
+  void createAllowsOwnerScopeRegardlessOfStoredType() {
     mockCurrentUser(2002L, List.of("AUDITOR"));
-    when(resourceScopeMapper.selectById(9008L)).thenReturn(scope(9008L, 1001L, "STANDARD"));
+    when(resourceScopeMapper.selectById(9008L)).thenReturn(scope(9008L, 1001L));
     when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
         scopeMember(9008L, 2002L, 1, 1, 1, 0, 0)
     ));
+    when(identifierGenerator.nextId(any())).thenReturn(9907L);
 
-    assertThatThrownBy(() -> standardService.create(new StandardUpsertRequest(
+    var created = standardService.create(new StandardUpsertRequest(
         1001L,
         "Shared Scope Standard",
         "internal",
@@ -445,12 +446,10 @@ class StandardServiceTests {
         "9008",
         List.of(),
         "initial draft"
-    )))
-        .isInstanceOf(BusinessException.class)
-        .extracting("code")
-        .isEqualTo("RESOURCE_SCOPE_OWNER_TYPE_INVALID");
+    ));
 
-    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+    assertThat(created.ownerScopeId()).isEqualTo("9008");
+    verify(standardMapper).insert(any(BizStandardEntity.class));
   }
 
   @Test
@@ -640,14 +639,9 @@ class StandardServiceTests {
   }
 
   private SysResourceScopeEntity scope(Long id, Long tenantId) {
-    return scope(id, tenantId, "RESOURCE");
-  }
-
-  private SysResourceScopeEntity scope(Long id, Long tenantId, String scopeType) {
     SysResourceScopeEntity entity = new SysResourceScopeEntity();
     entity.setId(id);
     entity.setTenantId(tenantId);
-    entity.setScopeType(scopeType);
     return entity;
   }
 

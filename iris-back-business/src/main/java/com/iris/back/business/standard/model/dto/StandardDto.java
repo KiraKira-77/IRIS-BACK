@@ -20,7 +20,8 @@ public record StandardDto(
     String visibilityLevel,
     String ownerScopeId,
     List<ScopeGrantDto> grants,
-    String changeLog
+    String changeLog,
+    String operatorName
 ) {
   public record ScopeGrantDto(
       String scopeId,

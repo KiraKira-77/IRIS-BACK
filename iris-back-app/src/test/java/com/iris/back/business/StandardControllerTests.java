@@ -105,7 +105,8 @@ class StandardControllerTests {
         "SCOPED",
         "9001",
         List.of(new StandardDto.ScopeGrantDto("9002", List.of("view"))),
-        "initial draft"
+        "initial draft",
+        "Platform Administrator"
     )));
 
     mockMvc.perform(get("/api/v1/standards"))
@@ -115,6 +116,7 @@ class StandardControllerTests {
         .andExpect(jsonPath("$.data[0].title").value("Finance Standard"))
         .andExpect(jsonPath("$.data[0].visibilityLevel").value("SCOPED"))
         .andExpect(jsonPath("$.data[0].ownerScopeId").value("9001"))
+        .andExpect(jsonPath("$.data[0].operatorName").value("Platform Administrator"))
         .andExpect(jsonPath("$.data[0].grants[0].scopeId").value("9002"));
   }
 
@@ -139,7 +141,8 @@ class StandardControllerTests {
         "PUBLIC",
         "9001",
         List.of(new StandardDto.ScopeGrantDto("9002", List.of("view"))),
-        "initial draft"
+        "initial draft",
+        "Platform Administrator"
     ));
 
     mockMvc.perform(post("/api/v1/standards")
@@ -165,6 +168,7 @@ class StandardControllerTests {
         .andExpect(jsonPath("$.data.id").value("9902"))
         .andExpect(jsonPath("$.data.standardCode").value("STD-FIN-002"))
         .andExpect(jsonPath("$.data.ownerScopeId").value("9001"))
+        .andExpect(jsonPath("$.data.operatorName").value("Platform Administrator"))
         .andExpect(jsonPath("$.data.grants[0].scopeId").value("9002"));
   }
 
@@ -190,7 +194,8 @@ class StandardControllerTests {
             "PUBLIC",
             "9001",
             List.of(new StandardDto.ScopeGrantDto("9002", List.of("view"))),
-            "upgrade draft"
+            "upgrade draft",
+            "Platform Administrator"
         ));
 
     mockMvc.perform(post("/api/v1/standards/9902/upgrade")
@@ -207,6 +212,7 @@ class StandardControllerTests {
         .andExpect(jsonPath("$.data.version").value("V2.0"))
         .andExpect(jsonPath("$.data.status").value("draft"))
         .andExpect(jsonPath("$.data.previousVersionId").value("9902"))
+        .andExpect(jsonPath("$.data.operatorName").value("Platform Administrator"))
         .andExpect(jsonPath("$.data.changeLog").value("upgrade draft"));
   }
 }

@@ -12,8 +12,10 @@ import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
+import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
+import com.iris.back.system.model.entity.SysUserEntity;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
@@ -30,11 +32,10 @@ import org.springframework.stereotype.Service;
 @Service
 public class StandardService {
 
-  private static final long SYSTEM_USER_ID = 2001L;
-
   private final BizStandardMapper standardMapper;
   private final SysResourceScopeMapper resourceScopeMapper;
   private final SysResourceScopeMemberMapper resourceScopeMemberMapper;
+  private final SysUserMapper userMapper;
   private final CurrentUserContext currentUserContext;
   private final IdentifierGenerator identifierGenerator;
 
@@ -42,12 +43,14 @@ public class StandardService {
       BizStandardMapper standardMapper,
       SysResourceScopeMapper resourceScopeMapper,
       SysResourceScopeMemberMapper resourceScopeMemberMapper,
+      SysUserMapper userMapper,
       CurrentUserContext currentUserContext,
       IdentifierGenerator identifierGenerator
   ) {
     this.standardMapper = standardMapper;
     this.resourceScopeMapper = resourceScopeMapper;
     this.resourceScopeMemberMapper = resourceScopeMemberMapper;
+    this.userMapper = userMapper;
     this.currentUserContext = currentUserContext;
     this.identifierGenerator = identifierGenerator;
   }
@@ -62,15 +65,17 @@ public class StandardService {
         .stream()
         .filter(entity -> canView(entity, permissionContext))
         .sorted(Comparator.comparing(BizStandardEntity::getId))
-        .map(this::toDto)
-        .toList();
+        .collect(Collectors.collectingAndThen(Collectors.toList(), standards -> {
+          Map<Long, String> operatorNames = loadOperatorNames(standards);
+          return standards.stream().map(entity -> toDto(entity, operatorNames)).toList();
+        }));
   }
 
   public StandardDto get(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
     ensureCanView(entity, buildPermissionContext(principal));
-    return toDto(entity);
+    return toDto(entity, loadOperatorNames(List.of(entity)));
   }
 
   public StandardDto create(StandardUpsertRequest request) {
@@ -89,10 +94,10 @@ public class StandardService {
     applyFields(entity, request, ownerScopeId);
     entity.setDeleted(0);
     entity.setVersion(0L);
-    entity.setCreatedBy(SYSTEM_USER_ID);
-    entity.setUpdatedBy(SYSTEM_USER_ID);
+    entity.setCreatedBy(principal.userId());
+    entity.setUpdatedBy(principal.userId());
     standardMapper.insert(entity);
-    return toDto(entity);
+    return toDto(entity, loadOperatorNames(List.of(entity)));
   }
 
   public StandardDto upgrade(String id, StandardUpgradeRequest request) {
@@ -113,8 +118,8 @@ public class StandardService {
     entity.setStandardGroupId(source.getStandardGroupId());
     entity.setDeleted(0);
     entity.setVersion(0L);
-    entity.setCreatedBy(SYSTEM_USER_ID);
-    entity.setUpdatedBy(SYSTEM_USER_ID);
+    entity.setCreatedBy(principal.userId());
+    entity.setUpdatedBy(principal.userId());
     entity.setStandardCode(source.getStandardCode());
     entity.setTitle(source.getTitle());
     entity.setCategory(source.getCategory());
@@ -133,7 +138,7 @@ public class StandardService {
     )));
     entity.setChangeLog(normalizeRequiredText(request.changeLog()));
     standardMapper.insert(entity);
-    return toDto(entity);
+    return toDto(entity, loadOperatorNames(List.of(entity)));
   }
 
   public StandardDto update(String id, StandardUpsertRequest request) {
@@ -149,9 +154,9 @@ public class StandardService {
         ? entity.getStandardGroupId()
         : request.standardGroupId());
     applyFields(entity, request, ownerScopeId);
-    entity.setUpdatedBy(SYSTEM_USER_ID);
+    entity.setUpdatedBy(principal.userId());
     standardMapper.updateById(entity);
-    return toDto(entity);
+    return toDto(entity, loadOperatorNames(List.of(entity)));
   }
 
   public void delete(String id) {
@@ -296,7 +301,22 @@ public class StandardService {
     return ((Number) identifierGenerator.nextId(entity)).longValue();
   }
 
-  private StandardDto toDto(BizStandardEntity entity) {
+  private Map<Long, String> loadOperatorNames(List<BizStandardEntity> standards) {
+    List<Long> operatorIds = standards.stream()
+        .flatMap(entity -> java.util.stream.Stream.of(entity.getUpdatedBy(), entity.getCreatedBy()))
+        .filter(Objects::nonNull)
+        .distinct()
+        .toList();
+
+    if (operatorIds.isEmpty()) {
+      return Map.of();
+    }
+
+    return userMapper.selectBatchIds(operatorIds).stream()
+        .collect(Collectors.toMap(SysUserEntity::getId, SysUserEntity::getUsername, (left, right) -> left));
+  }
+
+  private StandardDto toDto(BizStandardEntity entity, Map<Long, String> operatorNames) {
     return new StandardDto(
         String.valueOf(entity.getId()),
         entity.getStandardGroupId(),
@@ -317,8 +337,17 @@ public class StandardService {
         splitCommaValues(entity.getSharedScopeIds()).stream()
             .map(scopeId -> new StandardDto.ScopeGrantDto(scopeId, List.of("view")))
             .toList(),
-        entity.getChangeLog()
+        entity.getChangeLog(),
+        resolveOperatorName(entity, operatorNames)
     );
+  }
+
+  private String resolveOperatorName(BizStandardEntity entity, Map<Long, String> operatorNames) {
+    Long operatorId = entity.getUpdatedBy() != null ? entity.getUpdatedBy() : entity.getCreatedBy();
+    if (operatorId == null) {
+      return null;
+    }
+    return operatorNames.getOrDefault(operatorId, String.valueOf(operatorId));
   }
 
   private String normalizeRequiredText(String value) {

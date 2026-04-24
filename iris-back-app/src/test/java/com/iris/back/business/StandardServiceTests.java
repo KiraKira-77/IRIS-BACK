@@ -18,8 +18,10 @@ import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
+import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
+import com.iris.back.system.model.entity.SysUserEntity;
 import java.time.LocalDate;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -46,6 +48,9 @@ class StandardServiceTests {
 
   @Mock
   private CurrentUserContext currentUserContext;
+
+  @Mock
+  private SysUserMapper userMapper;
 
   @InjectMocks
   private StandardService standardService;
@@ -84,6 +89,8 @@ class StandardServiceTests {
     hidden.setVisibilityLevel("SCOPED");
     hidden.setOwnerScopeId(9010L);
     hidden.setSharedScopeIds("9011");
+    entity.setUpdatedBy(2004L);
+    when(userMapper.selectBatchIds(List.of(2004L))).thenReturn(List.of(user(2004L, "Senior Auditor")));
     when(standardMapper.selectList(any())).thenReturn(List.of(entity, hidden));
     when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
         scopeMember(9001L, 2004L, 1, 0, 0, 0, 0),
@@ -96,6 +103,7 @@ class StandardServiceTests {
     assertThat(result.getFirst().id()).isEqualTo("9901");
     assertThat(result.getFirst().standardCode()).isEqualTo("STD-FIN-001");
     assertThat(result.getFirst().ownerScopeId()).isEqualTo("9001");
+    assertThat(result.getFirst().operatorName()).isEqualTo("Senior Auditor");
     assertThat(result.getFirst().grants()).extracting(grant -> grant.scopeId() + ":" + grant.actions())
         .containsExactly("9002:[view]", "9003:[view]");
   }
@@ -109,6 +117,7 @@ class StandardServiceTests {
         scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
     ));
     when(identifierGenerator.nextId(any())).thenReturn(9902L);
+    when(userMapper.selectBatchIds(List.of(2002L))).thenReturn(List.of(user(2002L, "Finance Manager")));
 
     var created = standardService.create(new StandardUpsertRequest(
         1001L,
@@ -136,7 +145,10 @@ class StandardServiceTests {
     assertThat(created.standardCode()).isEqualTo("STD-FIN-002");
     assertThat(created.ownerScopeId()).isEqualTo("9001");
     assertThat(created.visibilityLevel()).isEqualTo("PUBLIC");
+    assertThat(created.operatorName()).isEqualTo("Finance Manager");
     assertThat(created.grants()).extracting(grant -> grant.scopeId()).containsExactly("9002");
+    assertThat(captor.getValue().getCreatedBy()).isEqualTo(2002L);
+    assertThat(captor.getValue().getUpdatedBy()).isEqualTo(2002L);
     assertThat(captor.getValue().getStandardCode()).isEqualTo("STD-FIN-002");
     assertThat(captor.getValue().getSharedScopeIds()).isEqualTo("9002");
   }
@@ -327,6 +339,7 @@ class StandardServiceTests {
         scopeMember(9002L, 2002L, 1, 0, 0, 0, 0)
     ));
     when(identifierGenerator.nextId(any())).thenReturn(9903L);
+    when(userMapper.selectBatchIds(List.of(2002L))).thenReturn(List.of(user(2002L, "Finance Manager")));
 
     var created = standardService.upgrade("9902", new StandardUpgradeRequest("V3.0", "upgrade draft"));
 
@@ -341,6 +354,9 @@ class StandardServiceTests {
     assertThat(created.versionNumber()).isEqualTo(3);
     assertThat(created.previousVersionId()).isEqualTo("9902");
     assertThat(created.changeLog()).isEqualTo("upgrade draft");
+    assertThat(created.operatorName()).isEqualTo("Finance Manager");
+    assertThat(captor.getValue().getCreatedBy()).isEqualTo(2002L);
+    assertThat(captor.getValue().getUpdatedBy()).isEqualTo(2002L);
     assertThat(captor.getValue().getVersionNumber()).isEqualTo(3);
     assertThat(captor.getValue().getPreviousVersionId()).isEqualTo(9902L);
     assertThat(captor.getValue().getStandardVersion()).isEqualTo("V3.0");
@@ -419,6 +435,13 @@ class StandardServiceTests {
     entity.setStandardVersion(version);
     entity.setVersionNumber(versionNumber);
     entity.setPreviousVersionId(previousVersionId);
+    return entity;
+  }
+
+  private SysUserEntity user(Long id, String username) {
+    SysUserEntity entity = new SysUserEntity();
+    entity.setId(id);
+    entity.setUsername(username);
     return entity;
   }
 

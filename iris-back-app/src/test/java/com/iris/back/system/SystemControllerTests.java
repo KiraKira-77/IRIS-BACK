@@ -11,6 +11,8 @@ import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.service.StandardService;
 import com.iris.back.framework.security.AuthSessionStore;
 import com.iris.back.framework.security.CurrentUserPrincipal;
+import com.iris.back.system.mapper.SysFileMapper;
+import com.iris.back.system.mapper.SysFileRefMapper;
 import com.iris.back.system.mapper.SysOrgMapper;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
@@ -87,6 +89,12 @@ class SystemControllerTests {
 
   @MockBean
   private StandardService standardService;
+
+  @MockBean
+  private SysFileMapper sysFileMapper;
+
+  @MockBean
+  private SysFileRefMapper sysFileRefMapper;
 
   @MockBean
   private BizStandardMapper bizStandardMapper;

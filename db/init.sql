@@ -211,6 +211,48 @@ CREATE TABLE IF NOT EXISTS biz_standard (
   KEY idx_biz_standard_status (tenant_id, status)
 );
 
+CREATE TABLE IF NOT EXISTS sys_file (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  bucket_name VARCHAR(128) NOT NULL,
+  object_key VARCHAR(500) NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_ext VARCHAR(32) NULL,
+  content_type VARCHAR(128) NULL,
+  file_size BIGINT NOT NULL DEFAULT 0,
+  storage_type VARCHAR(32) NOT NULL DEFAULT 'MINIO',
+  etag VARCHAR(128) NULL,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_sys_file_tenant (tenant_id, id),
+  KEY idx_sys_file_object (tenant_id, bucket_name, object_key(100))
+);
+
+CREATE TABLE IF NOT EXISTS sys_file_ref (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  file_id BIGINT NOT NULL,
+  biz_type VARCHAR(64) NOT NULL,
+  biz_id BIGINT NOT NULL,
+  category VARCHAR(64) NULL,
+  sort_no INT NOT NULL DEFAULT 0,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_sys_file_ref (tenant_id, file_id, biz_type, biz_id),
+  KEY idx_sys_file_ref_biz (tenant_id, biz_type, biz_id),
+  KEY idx_sys_file_ref_file (tenant_id, file_id)
+);
+
 CREATE TABLE IF NOT EXISTS sys_login_log (
   id BIGINT NOT NULL PRIMARY KEY,
   tenant_id BIGINT NOT NULL,

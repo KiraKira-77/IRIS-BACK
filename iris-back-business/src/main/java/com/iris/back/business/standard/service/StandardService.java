@@ -10,12 +10,14 @@ import com.iris.back.business.standard.model.request.StandardUpsertRequest;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
+import com.iris.back.system.model.dto.FileAttachmentDto;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysUserEntity;
+import com.iris.back.system.service.FileService;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
@@ -28,14 +30,18 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class StandardService {
+
+  private static final String BIZ_TYPE_STANDARD = "STANDARD";
 
   private final BizStandardMapper standardMapper;
   private final SysResourceScopeMapper resourceScopeMapper;
   private final SysResourceScopeMemberMapper resourceScopeMemberMapper;
   private final SysUserMapper userMapper;
+  private final FileService fileService;
   private final CurrentUserContext currentUserContext;
   private final IdentifierGenerator identifierGenerator;
 
@@ -44,6 +50,7 @@ public class StandardService {
       SysResourceScopeMapper resourceScopeMapper,
       SysResourceScopeMemberMapper resourceScopeMemberMapper,
       SysUserMapper userMapper,
+      FileService fileService,
       CurrentUserContext currentUserContext,
       IdentifierGenerator identifierGenerator
   ) {
@@ -51,6 +58,7 @@ public class StandardService {
     this.resourceScopeMapper = resourceScopeMapper;
     this.resourceScopeMemberMapper = resourceScopeMemberMapper;
     this.userMapper = userMapper;
+    this.fileService = fileService;
     this.currentUserContext = currentUserContext;
     this.identifierGenerator = identifierGenerator;
   }
@@ -61,13 +69,20 @@ public class StandardService {
 
     return standardMapper.selectList(new LambdaQueryWrapper<BizStandardEntity>()
             .eq(BizStandardEntity::getTenantId, principal.tenantId())
-            .orderByAsc(BizStandardEntity::getId))
+        .orderByAsc(BizStandardEntity::getId))
         .stream()
         .filter(entity -> canView(entity, permissionContext))
         .sorted(Comparator.comparing(BizStandardEntity::getId))
         .collect(Collectors.collectingAndThen(Collectors.toList(), standards -> {
           Map<Long, String> operatorNames = loadOperatorNames(standards);
-          return standards.stream().map(entity -> toDto(entity, operatorNames)).toList();
+          Map<Long, List<FileAttachmentDto>> attachments = fileService.listByBizIds(
+              principal.tenantId(),
+              BIZ_TYPE_STANDARD,
+              standards.stream().map(BizStandardEntity::getId).toList()
+          );
+          return standards.stream()
+              .map(entity -> toDto(entity, operatorNames, attachments.getOrDefault(entity.getId(), List.of())))
+              .toList();
         }));
   }
 
@@ -75,7 +90,11 @@ public class StandardService {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
     ensureCanView(entity, buildPermissionContext(principal));
-    return toDto(entity, loadOperatorNames(List.of(entity)));
+    return toDto(
+        entity,
+        loadOperatorNames(List.of(entity)),
+        fileService.listByBizId(principal.tenantId(), BIZ_TYPE_STANDARD, entity.getId())
+    );
   }
 
   public StandardDto create(StandardUpsertRequest request) {
@@ -84,12 +103,16 @@ public class StandardService {
     StandardPermissionContext permissionContext = buildPermissionContext(principal);
     Long ownerScopeId = requireOwnerScope(parseId(request.ownerScopeId()), request.tenantId()).getId();
     ensureCanCreate(ownerScopeId, permissionContext);
+    Long previousVersionId = parseOptionalId(request.previousVersionId());
+    BizStandardEntity previousVersion = previousVersionId == null
+        ? null
+        : requireStandard(previousVersionId, principal.tenantId());
     BizStandardEntity entity = new BizStandardEntity();
     long nextId = nextId(entity);
     entity.setId(nextId);
     entity.setTenantId(request.tenantId());
     entity.setStandardGroupId(request.standardGroupId() == null || request.standardGroupId().isBlank()
-        ? String.valueOf(nextId)
+        ? previousVersion == null ? String.valueOf(nextId) : previousVersion.getStandardGroupId()
         : request.standardGroupId());
     applyFields(entity, request, ownerScopeId);
     entity.setDeleted(0);
@@ -97,7 +120,14 @@ public class StandardService {
     entity.setCreatedBy(principal.userId());
     entity.setUpdatedBy(principal.userId());
     standardMapper.insert(entity);
-    return toDto(entity, loadOperatorNames(List.of(entity)));
+    if (previousVersion != null) {
+      fileService.copyBindings(BIZ_TYPE_STANDARD, request.tenantId(), previousVersion.getId(), entity.getId());
+    }
+    return toDto(
+        entity,
+        loadOperatorNames(List.of(entity)),
+        fileService.listByBizId(principal.tenantId(), BIZ_TYPE_STANDARD, entity.getId())
+    );
   }
 
   public StandardDto upgrade(String id, StandardUpgradeRequest request) {
@@ -138,7 +168,7 @@ public class StandardService {
     )));
     entity.setChangeLog(normalizeRequiredText(request.changeLog()));
     standardMapper.insert(entity);
-    return toDto(entity, loadOperatorNames(List.of(entity)));
+    return toDto(entity, loadOperatorNames(List.of(entity)), List.of());
   }
 
   public StandardDto update(String id, StandardUpsertRequest request) {
@@ -156,14 +186,33 @@ public class StandardService {
     applyFields(entity, request, ownerScopeId);
     entity.setUpdatedBy(principal.userId());
     standardMapper.updateById(entity);
-    return toDto(entity, loadOperatorNames(List.of(entity)));
+    return toDto(
+        entity,
+        loadOperatorNames(List.of(entity)),
+        fileService.listByBizId(principal.tenantId(), BIZ_TYPE_STANDARD, entity.getId())
+    );
   }
 
   public void delete(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
+    ensureDraftDeleteOnly(entity);
     ensureCanDelete(entity, buildPermissionContext(principal));
     standardMapper.deleteById(entity.getId());
+  }
+
+  public FileAttachmentDto uploadAttachment(String id, MultipartFile file) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
+    ensureCanEdit(entity, buildPermissionContext(principal));
+    return fileService.upload(BIZ_TYPE_STANDARD, principal.tenantId(), entity.getId(), file);
+  }
+
+  public void deleteAttachment(String id, String fileId) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
+    ensureCanEdit(entity, buildPermissionContext(principal));
+    fileService.delete(BIZ_TYPE_STANDARD, principal.tenantId(), entity.getId(), parseId(fileId));
   }
 
   private List<BizStandardEntity> listGroupStandards(Long tenantId, String standardGroupId) {
@@ -316,7 +365,11 @@ public class StandardService {
         .collect(Collectors.toMap(SysUserEntity::getId, SysUserEntity::getUsername, (left, right) -> left));
   }
 
-  private StandardDto toDto(BizStandardEntity entity, Map<Long, String> operatorNames) {
+  private StandardDto toDto(
+      BizStandardEntity entity,
+      Map<Long, String> operatorNames,
+      List<FileAttachmentDto> attachments
+  ) {
     return new StandardDto(
         String.valueOf(entity.getId()),
         entity.getStandardGroupId(),
@@ -326,7 +379,7 @@ public class StandardService {
         entity.getStandardVersion(),
         entity.getPublishDate() == null ? null : entity.getPublishDate().toString(),
         entity.getStatus(),
-        List.of(),
+        attachments,
         entity.getDescription(),
         entity.getCreatedAt() == null ? null : entity.getCreatedAt().toString(),
         entity.getUpdatedAt() == null ? null : entity.getUpdatedAt().toString(),
@@ -415,6 +468,15 @@ public class StandardService {
   private void ensureCanDelete(BizStandardEntity entity, StandardPermissionContext permissionContext) {
     if (!matchesScopeAction(entity.getOwnerScopeId(), permissionContext, this::hasDeleteAccess)) {
       throw new AccessDeniedException("no permission to delete standard");
+    }
+  }
+
+  private void ensureDraftDeleteOnly(BizStandardEntity entity) {
+    if (!isDraft(entity)) {
+      throw new BusinessException(
+          "STANDARD_DELETE_ONLY_DRAFT",
+          "only draft standard can be deleted: " + entity.getId()
+      );
     }
   }
 

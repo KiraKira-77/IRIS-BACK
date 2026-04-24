@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.iris.back.auth.service.AuthService;
 import com.iris.back.framework.security.AuthSessionStore;
 import com.iris.back.framework.web.GlobalExceptionHandler;
+import com.iris.back.system.mapper.SysFileMapper;
+import com.iris.back.system.mapper.SysFileRefMapper;
 import com.iris.back.system.mapper.SysOrgMapper;
 import com.iris.back.system.mapper.SysRoleMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
@@ -47,6 +49,12 @@ class FrameworkSmokeTests {
 
   @MockBean
   private AuthService authService;
+
+  @MockBean
+  private SysFileMapper sysFileMapper;
+
+  @MockBean
+  private SysFileRefMapper sysFileRefMapper;
 
   @Test
   void globalExceptionHandlerBeanExists() {

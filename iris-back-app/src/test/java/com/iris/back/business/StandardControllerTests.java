@@ -2,7 +2,10 @@ package com.iris.back.business;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doNothing;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -13,7 +16,10 @@ import com.iris.back.business.standard.model.dto.StandardDto;
 import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.service.StandardService;
 import com.iris.back.framework.security.AuthSessionStore;
+import com.iris.back.system.model.dto.FileAttachmentDto;
 import com.iris.back.system.mapper.SysOrgMapper;
+import com.iris.back.system.mapper.SysFileMapper;
+import com.iris.back.system.mapper.SysFileRefMapper;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
@@ -22,6 +28,7 @@ import com.iris.back.system.mapper.SysRoleMenuMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
 import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.mapper.SysUserRoleMapper;
+import com.iris.back.system.service.FileService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +38,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.mock.web.MockMultipartFile;
 
 @SpringBootTest(properties = {
     "spring.autoconfigure.exclude="
@@ -80,6 +88,15 @@ class StandardControllerTests {
 
   @MockBean
   private StandardService standardService;
+
+  @MockBean
+  private FileService fileService;
+
+  @MockBean
+  private SysFileMapper sysFileMapper;
+
+  @MockBean
+  private SysFileRefMapper sysFileRefMapper;
 
   @MockBean
   private BizStandardMapper bizStandardMapper;
@@ -214,5 +231,39 @@ class StandardControllerTests {
         .andExpect(jsonPath("$.data.previousVersionId").value("9902"))
         .andExpect(jsonPath("$.data.operatorName").value("Platform Administrator"))
         .andExpect(jsonPath("$.data.changeLog").value("upgrade draft"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void uploadAttachmentReturnsUploadedPayload() throws Exception {
+    when(standardService.uploadAttachment(org.mockito.ArgumentMatchers.eq("9902"), any()))
+        .thenReturn(new FileAttachmentDto(
+            "7001",
+            "evidence.pdf",
+            "http://minio/download",
+            1024L,
+            "application/pdf",
+            "Platform Administrator",
+            "2026-04-24T11:00:00"
+        ));
+
+    mockMvc.perform(multipart("/api/v1/standards/9902/attachments")
+            .file(new MockMultipartFile("file", "evidence.pdf", "application/pdf", "demo".getBytes())))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data.id").value("7001"))
+        .andExpect(jsonPath("$.data.name").value("evidence.pdf"))
+        .andExpect(jsonPath("$.data.type").value("application/pdf"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void deleteAttachmentReturnsSuccessPayload() throws Exception {
+    doNothing().when(standardService).deleteAttachment("9902", "7001");
+
+    mockMvc.perform(delete("/api/v1/standards/9902/attachments/7001"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.message").value("standard attachment deleted"));
   }
 }

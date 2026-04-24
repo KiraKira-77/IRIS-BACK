@@ -1,0 +1,34 @@
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/iris_back?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.iris.back: DEBUG
+
+iris:
+  security:
+    session-ttl-hours: 12
+  minio:
+    enabled: true
+    endpoint: 10.8.8.81
+    port: 9001
+    access-key: N3MX59bGKf0psAfv
+    secret-key: HqWfLPEgrPjUbu7850ljGS9ifAePRR7M
+    secure: false
+    bucket-name: jwt-iris
+    external-http: http
+    external-ip: 10.8.8.81
+    external-port: 9001
+    presigned-expiry-minutes: 30
+    max-file-size-mb: 20

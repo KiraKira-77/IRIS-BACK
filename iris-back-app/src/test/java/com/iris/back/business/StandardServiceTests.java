@@ -3,6 +3,7 @@ package com.iris.back.business;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -19,11 +20,15 @@ import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysUserMapper;
+import com.iris.back.system.model.dto.FileAttachmentDto;
 import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysUserEntity;
+import com.iris.back.system.service.FileService;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -52,8 +57,17 @@ class StandardServiceTests {
   @Mock
   private SysUserMapper userMapper;
 
+  @Mock
+  private FileService fileService;
+
   @InjectMocks
   private StandardService standardService;
+
+  @BeforeEach
+  void setUp() {
+    lenient().when(fileService.listByBizIds(any(), any(), any())).thenReturn(Map.of());
+    lenient().when(fileService.listByBizId(any(), any(), any())).thenReturn(List.of());
+  }
 
   @Test
   void listReturnsOnlyStandardsVisibleToCurrentUser() {
@@ -104,6 +118,7 @@ class StandardServiceTests {
     assertThat(result.getFirst().standardCode()).isEqualTo("STD-FIN-001");
     assertThat(result.getFirst().ownerScopeId()).isEqualTo("9001");
     assertThat(result.getFirst().operatorName()).isEqualTo("Senior Auditor");
+    assertThat(result.getFirst().attachments()).isEmpty();
     assertThat(result.getFirst().grants()).extracting(grant -> grant.scopeId() + ":" + grant.actions())
         .containsExactly("9002:[view]", "9003:[view]");
   }
@@ -258,6 +273,55 @@ class StandardServiceTests {
     ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
     verify(standardMapper).insert(captor.capture());
     assertThat(captor.getValue().getSharedScopeIds()).isEqualTo("9002");
+  }
+
+  @Test
+  void createRollbackDraftCopiesAttachmentsFromPreviousVersion() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity previousVersion = standard(8801L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    previousVersion.setTitle("Finance Standard");
+    previousVersion.setCategory("internal");
+    previousVersion.setStatus("archived");
+    previousVersion.setVisibilityLevel("PUBLIC");
+    previousVersion.setOwnerScopeId(9001L);
+    when(standardMapper.selectById(8801L)).thenReturn(previousVersion);
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+    when(identifierGenerator.nextId(any())).thenReturn(9906L);
+    when(userMapper.selectBatchIds(List.of(2002L))).thenReturn(List.of(user(2002L, "Finance Manager")));
+    when(fileService.listByBizId(1001L, "STANDARD", 9906L)).thenReturn(List.of(new FileAttachmentDto(
+        "7001",
+        "rollback.pdf",
+        "http://minio/download/rollback.pdf",
+        1024L,
+        "application/pdf",
+        "Finance Manager",
+        "2026-04-24T11:00:00"
+    )));
+
+    var created = standardService.create(new StandardUpsertRequest(
+        1001L,
+        "Finance Standard",
+        "internal",
+        "V1.0",
+        "draft",
+        null,
+        "rolled back draft",
+        "STD-FIN-001",
+        "group-1",
+        2,
+        "8801",
+        "PUBLIC",
+        "9001",
+        List.of(),
+        "rollback draft"
+    ));
+
+    verify(fileService).copyBindings("STANDARD", 1001L, 8801L, 9906L);
+    assertThat(created.previousVersionId()).isEqualTo("8801");
+    assertThat(created.attachments()).extracting(FileAttachmentDto::id).containsExactly("7001");
   }
 
   @Test
@@ -437,6 +501,40 @@ class StandardServiceTests {
   }
 
   @Test
+  void uploadAttachmentUsesGenericFileServiceAfterPermissionCheck() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity entity = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    entity.setOwnerScopeId(9001L);
+    entity.setStatus("draft");
+    when(standardMapper.selectById(9902L)).thenReturn(entity);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+    when(fileService.upload(any(), any(), any(), any())).thenReturn(new FileAttachmentDto(
+        "7001",
+        "evidence.pdf",
+        "http://minio/download",
+        1024L,
+        "application/pdf",
+        "Finance Manager",
+        "2026-04-24T11:00:00"
+    ));
+
+    var result = standardService.uploadAttachment(
+        "9902",
+        new org.springframework.mock.web.MockMultipartFile(
+            "file",
+            "evidence.pdf",
+            "application/pdf",
+            "demo".getBytes()
+        )
+    );
+
+    assertThat(result.id()).isEqualTo("7001");
+    verify(fileService).upload(any(), any(), org.mockito.ArgumentMatchers.eq(9902L), any());
+  }
+
+  @Test
   void upgradeRejectsNonLatestSourceVersion() {
     mockCurrentUser(2002L, List.of("AUDITOR"));
     BizStandardEntity source = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
@@ -491,6 +589,28 @@ class StandardServiceTests {
         .isEqualTo("STANDARD_VERSION_DUPLICATE");
 
     verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  @Test
+  void deleteRejectsArchivedStandard() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity archived = standard(9902L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    archived.setTitle("Archived Standard");
+    archived.setCategory("internal");
+    archived.setStatus("archived");
+    archived.setVisibilityLevel("SCOPED");
+    archived.setOwnerScopeId(9001L);
+    when(standardMapper.selectById(9902L)).thenReturn(archived);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 1, 0)
+    ));
+
+    assertThatThrownBy(() -> standardService.delete("9902"))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("STANDARD_DELETE_ONLY_DRAFT");
+
+    verify(standardMapper, never()).deleteById(9902L);
   }
 
   private BizStandardEntity standard(

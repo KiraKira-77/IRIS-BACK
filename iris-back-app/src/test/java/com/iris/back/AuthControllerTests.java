@@ -10,6 +10,8 @@ import com.iris.back.auth.model.CurrentUserResponse;
 import com.iris.back.auth.model.LoginResponse;
 import com.iris.back.auth.service.AuthService;
 import com.iris.back.framework.security.AuthSessionStore;
+import com.iris.back.system.mapper.SysFileMapper;
+import com.iris.back.system.mapper.SysFileRefMapper;
 import com.iris.back.system.mapper.SysOrgMapper;
 import com.iris.back.system.mapper.SysRoleMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
@@ -57,6 +59,12 @@ class AuthControllerTests {
 
   @MockBean
   private AuthService authService;
+
+  @MockBean
+  private SysFileMapper sysFileMapper;
+
+  @MockBean
+  private SysFileRefMapper sysFileRefMapper;
 
   @Test
   void loginReturnsSuccessEnvelope() throws Exception {

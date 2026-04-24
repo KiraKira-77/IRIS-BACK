@@ -1,5 +1,6 @@
 package com.iris.back.business.standard.model.dto;
 
+import com.iris.back.system.model.dto.FileAttachmentDto;
 import java.util.List;
 
 public record StandardDto(
@@ -11,7 +12,7 @@ public record StandardDto(
     String version,
     String publishDate,
     String status,
-    List<String> attachments,
+    List<FileAttachmentDto> attachments,
     String description,
     String createdAt,
     String updatedAt,

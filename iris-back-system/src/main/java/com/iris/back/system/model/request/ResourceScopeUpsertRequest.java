@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotNull;
 
 public record ResourceScopeUpsertRequest(
     @NotNull(message = "must not be null") Long tenantId,
-    @NotBlank(message = "must not be blank") String scopeCode,
+    String scopeCode,
     @NotBlank(message = "must not be blank") String scopeName,
     @NotBlank(message = "must not be blank") String scopeType,
     @NotNull(message = "must not be null") Integer status,

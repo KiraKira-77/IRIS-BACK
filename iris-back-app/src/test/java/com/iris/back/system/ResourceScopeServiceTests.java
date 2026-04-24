@@ -68,6 +68,48 @@ class ResourceScopeServiceTests {
   }
 
   @Test
+  void createGeneratesScopeCodeWhenBlank() {
+    when(identifierGenerator.nextId(any())).thenReturn(9101002L);
+    when(resourceScopeMapper.selectList(null)).thenReturn(List.of(
+        scope(9101L, 1001L, "RS0002"),
+        scope(9102L, 1001L, "FINANCE"),
+        scope(9103L, 1001L, "RS0009")
+    ));
+
+    var created = resourceScopeService.create(new ResourceScopeUpsertRequest(
+        1001L, " ", "Generated Scope", "RESOURCE", 1, "created in test"
+    ));
+
+    ArgumentCaptor<SysResourceScopeEntity> captor = ArgumentCaptor.forClass(SysResourceScopeEntity.class);
+    verify(resourceScopeMapper).insert(captor.capture());
+
+    assertThat(created.scopeCode()).isEqualTo("RS0010");
+    assertThat(captor.getValue().getScopeCode()).isEqualTo("RS0010");
+  }
+
+  @Test
+  void updateKeepsExistingScopeCodeWhenBlank() {
+    SysResourceScopeEntity scope = scope(9101L, 1001L, "RS0007");
+    scope.setScopeName("Finance Scope");
+    scope.setScopeType("RESOURCE");
+    scope.setStatus(1);
+    when(resourceScopeMapper.selectById(9101L)).thenReturn(scope);
+
+    var updated = resourceScopeService.update(9101L, new ResourceScopeUpsertRequest(
+        1001L, "", "Updated Scope", "STANDARD", 0, "updated in test"
+    ));
+
+    ArgumentCaptor<SysResourceScopeEntity> captor = ArgumentCaptor.forClass(SysResourceScopeEntity.class);
+    verify(resourceScopeMapper).updateById(captor.capture());
+
+    assertThat(updated.scopeCode()).isEqualTo("RS0007");
+    assertThat(updated.scopeName()).isEqualTo("Updated Scope");
+    assertThat(captor.getValue().getScopeCode()).isEqualTo("RS0007");
+    assertThat(captor.getValue().getScopeType()).isEqualTo("STANDARD");
+    assertThat(captor.getValue().getStatus()).isEqualTo(0);
+  }
+
+  @Test
   void replaceMembersRewritesScopeMembersWithPermissionFlags() {
     SysResourceScopeEntity scope = new SysResourceScopeEntity();
     scope.setId(9101L);
@@ -195,5 +237,13 @@ class ResourceScopeServiceTests {
 
     verify(resourceScopeMemberMapper, never()).deleteByScopeIdHard(9101L);
     verify(resourceScopeMapper, never()).deleteByIdHard(9101L);
+  }
+
+  private SysResourceScopeEntity scope(Long id, Long tenantId, String scopeCode) {
+    SysResourceScopeEntity entity = new SysResourceScopeEntity();
+    entity.setId(id);
+    entity.setTenantId(tenantId);
+    entity.setScopeCode(scopeCode);
+    return entity;
   }
 }

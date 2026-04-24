@@ -235,6 +235,28 @@ class SystemControllerTests {
 
   @Test
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void createResourceScopeAllowsBlankScopeCode() throws Exception {
+    when(resourceScopeMapper.selectList(null)).thenReturn(List.of(scope(9101L, 1001L, "RS0007")));
+
+    mockMvc.perform(post("/api/v1/system/resource-scopes")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "tenantId": 1001,
+                  "scopeCode": "",
+                  "scopeName": "Generated Scope",
+                  "scopeType": "RESOURCE",
+                  "status": 1,
+                  "remark": "Created from test"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data.scopeCode").value("RS0008"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
   void resetPasswordReturnsSuccess() throws Exception {
     SysUserEntity entity = new SysUserEntity();
     entity.setId(2002L);
@@ -297,5 +319,16 @@ class SystemControllerTests {
     mockMvc.perform(delete("/api/v1/system/resource-scopes/9101"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(true));
+  }
+
+  private SysResourceScopeEntity scope(Long id, Long tenantId, String scopeCode) {
+    SysResourceScopeEntity entity = new SysResourceScopeEntity();
+    entity.setId(id);
+    entity.setTenantId(tenantId);
+    entity.setScopeCode(scopeCode);
+    entity.setScopeName("Scope " + scopeCode);
+    entity.setScopeType("RESOURCE");
+    entity.setStatus(1);
+    return entity;
   }
 }

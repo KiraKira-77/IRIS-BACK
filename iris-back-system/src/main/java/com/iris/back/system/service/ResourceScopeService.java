@@ -17,12 +17,15 @@ import com.iris.back.system.model.request.ResourceScopeUpsertRequest;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ResourceScopeService {
 
   private static final long SYSTEM_USER_ID = 2001L;
+  private static final Pattern GENERATED_SCOPE_CODE_PATTERN = Pattern.compile("^RS(\\d{4})$");
 
   private final SysResourceScopeMapper resourceScopeMapper;
   private final SysResourceScopeMemberMapper resourceScopeMemberMapper;
@@ -58,7 +61,7 @@ public class ResourceScopeService {
   public ResourceScopeDto create(ResourceScopeUpsertRequest request) {
     SysResourceScopeEntity entity = new SysResourceScopeEntity();
     entity.setId(nextId(entity));
-    applyScopeFields(entity, request);
+    applyScopeFields(entity, request, null);
     entity.setDeleted(0);
     entity.setVersion(0L);
     entity.setCreatedBy(SYSTEM_USER_ID);
@@ -69,7 +72,7 @@ public class ResourceScopeService {
 
   public ResourceScopeDto update(Long id, ResourceScopeUpsertRequest request) {
     SysResourceScopeEntity entity = requireScope(id);
-    applyScopeFields(entity, request);
+    applyScopeFields(entity, request, entity.getScopeCode());
     entity.setUpdatedBy(SYSTEM_USER_ID);
     resourceScopeMapper.updateById(entity);
     return toDto(entity);
@@ -107,13 +110,62 @@ public class ResourceScopeService {
     return List.copyOf(deduplicated.values());
   }
 
-  private void applyScopeFields(SysResourceScopeEntity entity, ResourceScopeUpsertRequest request) {
+  private void applyScopeFields(
+      SysResourceScopeEntity entity,
+      ResourceScopeUpsertRequest request,
+      String fallbackScopeCode
+  ) {
     entity.setTenantId(request.tenantId());
-    entity.setScopeCode(request.scopeCode());
+    entity.setScopeCode(resolveScopeCode(request.tenantId(), request.scopeCode(), fallbackScopeCode));
     entity.setScopeName(request.scopeName());
     entity.setScopeType(request.scopeType());
     entity.setStatus(request.status());
     entity.setRemark(request.remark());
+  }
+
+  private String resolveScopeCode(Long tenantId, String requestedScopeCode, String fallbackScopeCode) {
+    String normalizedRequestedCode = normalizeScopeCode(requestedScopeCode);
+    if (normalizedRequestedCode != null) {
+      return normalizedRequestedCode;
+    }
+    if (fallbackScopeCode != null && !fallbackScopeCode.isBlank()) {
+      return fallbackScopeCode;
+    }
+    return generateNextScopeCode(tenantId);
+  }
+
+  private String normalizeScopeCode(String scopeCode) {
+    if (scopeCode == null) {
+      return null;
+    }
+
+    String normalized = scopeCode.trim().replaceAll("\\s+", "_").toUpperCase(Locale.ROOT);
+    return normalized.isBlank() ? null : normalized;
+  }
+
+  private String generateNextScopeCode(Long tenantId) {
+    int nextSequence = resourceScopeMapper.selectList(null).stream()
+        .filter(scope -> tenantId.equals(scope.getTenantId()))
+        .map(SysResourceScopeEntity::getScopeCode)
+        .map(this::extractGeneratedScopeSequence)
+        .filter(sequence -> sequence >= 0)
+        .max(Integer::compareTo)
+        .orElse(0) + 1;
+
+    return "RS%04d".formatted(nextSequence);
+  }
+
+  private int extractGeneratedScopeSequence(String scopeCode) {
+    if (scopeCode == null) {
+      return -1;
+    }
+
+    var matcher = GENERATED_SCOPE_CODE_PATTERN.matcher(scopeCode.trim().toUpperCase(Locale.ROOT));
+    if (!matcher.matches()) {
+      return -1;
+    }
+
+    return Integer.parseInt(matcher.group(1));
   }
 
   private SysResourceScopeEntity requireScope(Long id) {

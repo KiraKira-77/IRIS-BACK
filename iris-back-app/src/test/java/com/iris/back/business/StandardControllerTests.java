@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.iris.back.auth.service.AuthService;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.model.dto.StandardDto;
+import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.service.StandardService;
 import com.iris.back.framework.security.AuthSessionStore;
 import com.iris.back.system.mapper.SysOrgMapper;
@@ -165,5 +166,47 @@ class StandardControllerTests {
         .andExpect(jsonPath("$.data.standardCode").value("STD-FIN-002"))
         .andExpect(jsonPath("$.data.ownerScopeId").value("9001"))
         .andExpect(jsonPath("$.data.grants[0].scopeId").value("9002"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void upgradeReturnsCreatedStandardPayload() throws Exception {
+    when(standardService.upgrade(org.mockito.ArgumentMatchers.eq("9902"), any(StandardUpgradeRequest.class)))
+        .thenReturn(new StandardDto(
+            "9903",
+            "9902",
+            "STD-FIN-002",
+            "Finance Standard",
+            "internal",
+            "V2.0",
+            null,
+            "draft",
+            List.of(),
+            "desc",
+            "2026-04-24T00:00:00",
+            "2026-04-24T00:00:00",
+            2,
+            "9902",
+            "PUBLIC",
+            "9001",
+            List.of(new StandardDto.ScopeGrantDto("9002", List.of("view"))),
+            "upgrade draft"
+        ));
+
+    mockMvc.perform(post("/api/v1/standards/9902/upgrade")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "version": "V2.0",
+                  "changeLog": "upgrade draft"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data.id").value("9903"))
+        .andExpect(jsonPath("$.data.version").value("V2.0"))
+        .andExpect(jsonPath("$.data.status").value("draft"))
+        .andExpect(jsonPath("$.data.previousVersionId").value("9902"))
+        .andExpect(jsonPath("$.data.changeLog").value("upgrade draft"));
   }
 }

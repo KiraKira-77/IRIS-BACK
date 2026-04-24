@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.model.dto.StandardDto;
 import com.iris.back.business.standard.model.entity.BizStandardEntity;
+import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.model.request.StandardUpsertRequest;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
@@ -18,6 +19,7 @@ import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Predicate;
@@ -93,6 +95,47 @@ public class StandardService {
     return toDto(entity);
   }
 
+  public StandardDto upgrade(String id, StandardUpgradeRequest request) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizStandardEntity source = requireStandard(parseId(id), principal.tenantId());
+    StandardPermissionContext permissionContext = buildPermissionContext(principal);
+    ensureCanEdit(source, permissionContext);
+    ensureCanCreate(source.getOwnerScopeId(), permissionContext);
+
+    List<BizStandardEntity> versions = listGroupStandards(principal.tenantId(), source.getStandardGroupId());
+    ensureUpgradeSourceIsLatest(source, versions);
+    String requestedVersion = normalizeRequiredText(request.version());
+    ensureVersionNotDuplicated(source.getStandardGroupId(), requestedVersion, versions);
+
+    BizStandardEntity entity = new BizStandardEntity();
+    entity.setId(nextId(entity));
+    entity.setTenantId(source.getTenantId());
+    entity.setStandardGroupId(source.getStandardGroupId());
+    entity.setDeleted(0);
+    entity.setVersion(0L);
+    entity.setCreatedBy(SYSTEM_USER_ID);
+    entity.setUpdatedBy(SYSTEM_USER_ID);
+    entity.setStandardCode(source.getStandardCode());
+    entity.setTitle(source.getTitle());
+    entity.setCategory(source.getCategory());
+    entity.setStandardVersion(requestedVersion);
+    entity.setStatus("draft");
+    entity.setPublishDate(null);
+    entity.setDescription(source.getDescription());
+    entity.setVersionNumber(nextVersionNumber(versions));
+    entity.setPreviousVersionId(source.getId());
+    entity.setVisibilityLevel(source.getVisibilityLevel());
+    entity.setOwnerScopeId(requireOwnerScope(source.getOwnerScopeId(), source.getTenantId()).getId());
+    entity.setSharedScopeIds(String.join(",", normalizeScopeIds(
+        splitCommaValues(source.getSharedScopeIds()),
+        source.getOwnerScopeId(),
+        source.getTenantId()
+    )));
+    entity.setChangeLog(normalizeRequiredText(request.changeLog()));
+    standardMapper.insert(entity);
+    return toDto(entity);
+  }
+
   public StandardDto update(String id, StandardUpsertRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     ensureTenantAccess(request.tenantId(), principal.tenantId());
@@ -116,6 +159,52 @@ public class StandardService {
     BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
     ensureCanDelete(entity, buildPermissionContext(principal));
     standardMapper.deleteById(entity.getId());
+  }
+
+  private List<BizStandardEntity> listGroupStandards(Long tenantId, String standardGroupId) {
+    return standardMapper.selectList(new LambdaQueryWrapper<BizStandardEntity>()
+        .eq(BizStandardEntity::getTenantId, tenantId)
+        .eq(BizStandardEntity::getStandardGroupId, standardGroupId));
+  }
+
+  private void ensureUpgradeSourceIsLatest(BizStandardEntity source, List<BizStandardEntity> versions) {
+    BizStandardEntity latest = versions.stream()
+        .max(Comparator
+            .comparing((BizStandardEntity item) -> item.getVersionNumber() == null ? 0 : item.getVersionNumber())
+            .thenComparing(BizStandardEntity::getId))
+        .orElse(source);
+    if (!Objects.equals(latest.getId(), source.getId())) {
+      throw new BusinessException(
+          "STANDARD_UPGRADE_SOURCE_NOT_LATEST",
+          "standard upgrade source is not latest: " + source.getId()
+      );
+    }
+  }
+
+  private void ensureVersionNotDuplicated(
+      String standardGroupId,
+      String requestedVersion,
+      List<BizStandardEntity> versions
+  ) {
+    boolean duplicated = versions.stream()
+        .map(BizStandardEntity::getStandardVersion)
+        .filter(Objects::nonNull)
+        .map(value -> value.trim().toUpperCase(Locale.ROOT))
+        .anyMatch(value -> value.equals(requestedVersion.toUpperCase(Locale.ROOT)));
+    if (duplicated) {
+      throw new BusinessException(
+          "STANDARD_VERSION_DUPLICATE",
+          "standard version already exists in group: " + standardGroupId + ", version: " + requestedVersion
+      );
+    }
+  }
+
+  private int nextVersionNumber(List<BizStandardEntity> versions) {
+    return versions.stream()
+        .map(BizStandardEntity::getVersionNumber)
+        .filter(Objects::nonNull)
+        .max(Integer::compareTo)
+        .orElse(0) + 1;
   }
 
   private void applyFields(BizStandardEntity entity, StandardUpsertRequest request, Long ownerScopeId) {

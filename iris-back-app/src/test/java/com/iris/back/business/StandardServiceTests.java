@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.model.entity.BizStandardEntity;
+import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.model.request.StandardUpsertRequest;
 import com.iris.back.business.standard.service.StandardService;
 import com.iris.back.common.exception.BusinessException;
@@ -300,6 +301,125 @@ class StandardServiceTests {
         .isEqualTo("RESOURCE_SCOPE_OWNER_TYPE_INVALID");
 
     verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  @Test
+  void upgradeCreatesNextDraftFromLatestVersion() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity source = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, null);
+    source.setTenantId(1001L);
+    source.setTitle("Finance Standard");
+    source.setCategory("internal");
+    source.setStatus("active");
+    source.setDescription("standard description");
+    source.setVisibilityLevel("SCOPED");
+    source.setOwnerScopeId(9001L);
+    source.setSharedScopeIds("9002");
+    when(standardMapper.selectById(9902L)).thenReturn(source);
+    when(standardMapper.selectList(any())).thenReturn(List.of(
+        standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, 9902L),
+        source
+    ));
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMapper.selectById(9002L)).thenReturn(scope(9002L, 1001L));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0),
+        scopeMember(9002L, 2002L, 1, 0, 0, 0, 0)
+    ));
+    when(identifierGenerator.nextId(any())).thenReturn(9903L);
+
+    var created = standardService.upgrade("9902", new StandardUpgradeRequest("V3.0", "upgrade draft"));
+
+    ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
+    verify(standardMapper).insert(captor.capture());
+
+    assertThat(created.id()).isEqualTo("9903");
+    assertThat(created.standardGroupId()).isEqualTo("group-1");
+    assertThat(created.version()).isEqualTo("V3.0");
+    assertThat(created.status()).isEqualTo("draft");
+    assertThat(created.publishDate()).isNull();
+    assertThat(created.versionNumber()).isEqualTo(3);
+    assertThat(created.previousVersionId()).isEqualTo("9902");
+    assertThat(created.changeLog()).isEqualTo("upgrade draft");
+    assertThat(captor.getValue().getVersionNumber()).isEqualTo(3);
+    assertThat(captor.getValue().getPreviousVersionId()).isEqualTo(9902L);
+    assertThat(captor.getValue().getStandardVersion()).isEqualTo("V3.0");
+  }
+
+  @Test
+  void upgradeRejectsNonLatestSourceVersion() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity source = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    source.setTenantId(1001L);
+    source.setTitle("Finance Standard");
+    source.setCategory("internal");
+    source.setStatus("archived");
+    source.setDescription("standard description");
+    source.setVisibilityLevel("SCOPED");
+    source.setOwnerScopeId(9001L);
+    when(standardMapper.selectById(9901L)).thenReturn(source);
+    when(standardMapper.selectList(any())).thenReturn(List.of(
+        source,
+        standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L)
+    ));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> standardService.upgrade("9901", new StandardUpgradeRequest("V3.0", "upgrade draft")))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("STANDARD_UPGRADE_SOURCE_NOT_LATEST");
+
+    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  @Test
+  void upgradeRejectsDuplicateVersionLabelInSameGroup() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity source = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    source.setTenantId(1001L);
+    source.setTitle("Finance Standard");
+    source.setCategory("internal");
+    source.setStatus("active");
+    source.setDescription("standard description");
+    source.setVisibilityLevel("SCOPED");
+    source.setOwnerScopeId(9001L);
+    when(standardMapper.selectById(9902L)).thenReturn(source);
+    when(standardMapper.selectList(any())).thenReturn(List.of(
+        standard(9901L, "group-1", "STD-FIN-001", "V3.0", 1, null),
+        source,
+        standard(9900L, "group-1", "STD-FIN-001", "V0.9", 0, null)
+    ));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> standardService.upgrade("9902", new StandardUpgradeRequest("V3.0", "upgrade draft")))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("STANDARD_VERSION_DUPLICATE");
+
+    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  private BizStandardEntity standard(
+      Long id,
+      String standardGroupId,
+      String standardCode,
+      String version,
+      Integer versionNumber,
+      Long previousVersionId
+  ) {
+    BizStandardEntity entity = new BizStandardEntity();
+    entity.setId(id);
+    entity.setTenantId(1001L);
+    entity.setStandardGroupId(standardGroupId);
+    entity.setStandardCode(standardCode);
+    entity.setStandardVersion(version);
+    entity.setVersionNumber(versionNumber);
+    entity.setPreviousVersionId(previousVersionId);
+    return entity;
   }
 
   private SysResourceScopeEntity scope(Long id, Long tenantId) {

@@ -1,6 +1,7 @@
 package com.iris.back.business.standard.controller;
 
 import com.iris.back.business.standard.model.dto.StandardDto;
+import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.model.request.StandardUpsertRequest;
 import com.iris.back.business.standard.service.StandardService;
 import com.iris.back.common.model.ApiResponse;
@@ -38,6 +39,14 @@ public class StandardController {
   @PostMapping
   public ApiResponse<StandardDto> create(@Valid @RequestBody StandardUpsertRequest request) {
     return ApiResponse.success("standard created", standardService.create(request));
+  }
+
+  @PostMapping("/{id}/upgrade")
+  public ApiResponse<StandardDto> upgrade(
+      @PathVariable String id,
+      @Valid @RequestBody StandardUpgradeRequest request
+  ) {
+    return ApiResponse.success("standard upgraded", standardService.upgrade(id, request));
   }
 
   @PutMapping("/{id}")

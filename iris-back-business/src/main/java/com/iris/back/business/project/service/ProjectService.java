@@ -2,6 +2,8 @@ package com.iris.back.business.project.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.checklist.model.entity.BizChecklistEntity;
@@ -13,16 +15,20 @@ import com.iris.back.business.project.mapper.BizProjectTaskWorkOrderMapper;
 import com.iris.back.business.project.model.dto.ProjectDto;
 import com.iris.back.business.project.model.dto.ProjectMemberDto;
 import com.iris.back.business.project.model.dto.ProjectTaskDto;
+import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
 import com.iris.back.business.project.model.entity.BizProjectEntity;
 import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskEntity;
+import com.iris.back.business.project.model.entity.BizProjectTaskWorkOrderEntity;
 import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.common.model.PageResponse;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -47,6 +53,8 @@ public class ProjectService {
   private final BizChecklistItemMapper checklistItemMapper;
   private final CurrentUserContext currentUserContext;
   private final IdentifierGenerator identifierGenerator;
+  private final OmsClient omsClient;
+  private final ObjectMapper objectMapper;
 
   public ProjectService(
       BizProjectMapper projectMapper,
@@ -56,7 +64,9 @@ public class ProjectService {
       BizChecklistMapper checklistMapper,
       BizChecklistItemMapper checklistItemMapper,
       CurrentUserContext currentUserContext,
-      IdentifierGenerator identifierGenerator
+      IdentifierGenerator identifierGenerator,
+      OmsClient omsClient,
+      ObjectMapper objectMapper
   ) {
     this.projectMapper = projectMapper;
     this.projectMemberMapper = projectMemberMapper;
@@ -66,6 +76,8 @@ public class ProjectService {
     this.checklistItemMapper = checklistItemMapper;
     this.currentUserContext = currentUserContext;
     this.identifierGenerator = identifierGenerator;
+    this.omsClient = omsClient;
+    this.objectMapper = objectMapper;
   }
 
   public PageResponse<ProjectDto> list(ProjectListQuery query) {
@@ -170,6 +182,107 @@ public class ProjectService {
         .eq(BizProjectMemberEntity::getTenantId, principal.tenantId())
         .eq(BizProjectMemberEntity::getProjectId, project.getId()));
     projectMapper.deleteById(project.getId());
+  }
+
+  public List<ProjectTaskWorkOrderDto> listTaskWorkOrders(String projectId, String taskId) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    ensureTaskWorkOrderAccess(project, task, principal);
+    return nullToList(projectTaskWorkOrderMapper.selectList(
+        new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
+            .eq(BizProjectTaskWorkOrderEntity::getTenantId, principal.tenantId())
+            .eq(BizProjectTaskWorkOrderEntity::getProjectId, project.getId())
+            .eq(BizProjectTaskWorkOrderEntity::getTaskId, task.getId())
+            .orderByDesc(BizProjectTaskWorkOrderEntity::getUpdatedAt)
+            .orderByDesc(BizProjectTaskWorkOrderEntity::getId)
+    )).stream().map(this::toWorkOrderDto).toList();
+  }
+
+  @Transactional
+  public List<ProjectTaskWorkOrderDto> createWorkOrders(
+      String projectId,
+      String taskId,
+      ProjectWorkOrderCreateRequest request
+  ) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    ensureTaskAssignee(task, principal);
+
+    List<ProjectWorkOrderCreateRequest.HandlerRequest> handlers = request.handlers();
+    List<OmsClient.OmsCreateCommand> commands = handlers.stream()
+        .map(handler -> new OmsClient.OmsCreateCommand(
+            handler.handlerId(),
+            handler.handlerName(),
+            trimToNull(request.title()) == null ? task.getTaskName() : request.title().trim(),
+            trimToNull(request.description()) == null ? task.getTaskDescription() : request.description().trim(),
+            task.getId() + ":" + handler.handlerId()
+        ))
+        .toList();
+    Map<String, OmsClient.OmsCreateResult> resultByHandlerId = omsClient.createWorkOrders(toTaskDto(task), commands)
+        .stream()
+        .collect(Collectors.toMap(OmsClient.OmsCreateResult::handlerId, Function.identity(), (left, right) -> left));
+    Map<String, BizProjectTaskWorkOrderEntity> existingByKey = nullToList(
+        projectTaskWorkOrderMapper.selectList(new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
+            .eq(BizProjectTaskWorkOrderEntity::getTenantId, principal.tenantId())
+            .eq(BizProjectTaskWorkOrderEntity::getTaskId, task.getId()))
+    ).stream().collect(Collectors.toMap(
+        BizProjectTaskWorkOrderEntity::getIdempotencyKey,
+        Function.identity(),
+        (left, right) -> left
+    ));
+
+    List<BizProjectTaskWorkOrderEntity> workOrders = commands.stream()
+        .map(command -> saveWorkOrder(project, task, principal, command, resultByHandlerId, existingByKey))
+        .toList();
+    if (!"in_progress".equals(task.getStatus())) {
+      task.setStatus("in_progress");
+      task.setUpdatedBy(principal.userId());
+      projectTaskMapper.updateById(task);
+    }
+    return workOrders.stream().map(this::toWorkOrderDto).toList();
+  }
+
+  @Transactional
+  public ProjectTaskWorkOrderDto refreshWorkOrder(String projectId, String taskId, String workOrderId) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
+    Long parsedWorkOrderId = parseId(workOrderId, "PROJECT_WORK_ORDER_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    ensureTaskWorkOrderAccess(project, task, principal);
+    BizProjectTaskWorkOrderEntity workOrder = requireWorkOrder(
+        parsedWorkOrderId,
+        parsedProjectId,
+        parsedTaskId,
+        principal.tenantId()
+    );
+    String omsWorkOrderId = normalizeRequiredText(workOrder.getOmsWorkOrderId(), "PROJECT_WORK_ORDER_OMS_ID_REQUIRED");
+    OmsClient.OmsWorkOrderSnapshot snapshot = omsClient.getWorkOrder(omsWorkOrderId);
+    List<OmsClient.OmsWorkOrderLogSnapshot> logs = omsClient.getWorkOrderLogs(omsWorkOrderId);
+    List<OmsClient.OmsAttachmentSnapshot> attachments = omsClient.getWorkOrderAttachments(omsWorkOrderId);
+
+    workOrder.setOmsStatus(snapshot.omsStatus());
+    workOrder.setOmsStatusName(snapshot.omsStatusName());
+    workOrder.setOmsResultSummary(snapshot.resultSummary());
+    workOrder.setOmsDetailPayload(snapshot.payload());
+    workOrder.setOmsLogPayload(writeJson(logs));
+    workOrder.setOmsAttachmentPayload(writeJson(attachments));
+    workOrder.setSyncStatus("synced");
+    workOrder.setLastSyncedAt(LocalDateTime.now());
+    workOrder.setSyncError(null);
+    workOrder.setUpdatedBy(principal.userId());
+    if (snapshot.reviewable() && workOrder.getCompletedAt() == null) {
+      workOrder.setCompletedAt(LocalDateTime.now());
+    }
+    projectTaskWorkOrderMapper.updateById(workOrder);
+    return toWorkOrderDto(workOrder);
   }
 
   @Transactional
@@ -370,6 +483,32 @@ public class ProjectService {
     return project;
   }
 
+  private BizProjectTaskEntity requireTask(Long taskId, Long projectId, Long tenantId) {
+    BizProjectTaskEntity task = projectTaskMapper.selectById(taskId);
+    if (task == null
+        || !Objects.equals(task.getTenantId(), tenantId)
+        || !Objects.equals(task.getProjectId(), projectId)) {
+      throw new BusinessException("PROJECT_TASK_NOT_FOUND", "project task not found: " + taskId);
+    }
+    return task;
+  }
+
+  private BizProjectTaskWorkOrderEntity requireWorkOrder(
+      Long workOrderId,
+      Long projectId,
+      Long taskId,
+      Long tenantId
+  ) {
+    BizProjectTaskWorkOrderEntity workOrder = projectTaskWorkOrderMapper.selectById(workOrderId);
+    if (workOrder == null
+        || !Objects.equals(workOrder.getTenantId(), tenantId)
+        || !Objects.equals(workOrder.getProjectId(), projectId)
+        || !Objects.equals(workOrder.getTaskId(), taskId)) {
+      throw new BusinessException("PROJECT_WORK_ORDER_NOT_FOUND", "project work order not found: " + workOrderId);
+    }
+    return workOrder;
+  }
+
   private void ensureCanView(
       BizProjectEntity project,
       List<BizProjectMemberEntity> members,
@@ -386,6 +525,67 @@ public class ProjectService {
     if (!Objects.equals(project.getLeaderId(), principal.userId())) {
       throw new BusinessException("PROJECT_LEADER_REQUIRED", "PROJECT_LEADER_REQUIRED");
     }
+  }
+
+  private void ensureTaskAssignee(BizProjectTaskEntity task, CurrentUserPrincipal principal) {
+    if (!Objects.equals(task.getAssigneeId(), principal.userId())) {
+      throw new BusinessException("PROJECT_TASK_ASSIGNEE_REQUIRED", "PROJECT_TASK_ASSIGNEE_REQUIRED");
+    }
+  }
+
+  private void ensureTaskWorkOrderAccess(
+      BizProjectEntity project,
+      BizProjectTaskEntity task,
+      CurrentUserPrincipal principal
+  ) {
+    if (!Objects.equals(project.getLeaderId(), principal.userId())
+        && !Objects.equals(task.getAssigneeId(), principal.userId())) {
+      throw new BusinessException("PROJECT_TASK_ASSIGNEE_REQUIRED", "PROJECT_TASK_ASSIGNEE_REQUIRED");
+    }
+  }
+
+  private BizProjectTaskWorkOrderEntity saveWorkOrder(
+      BizProjectEntity project,
+      BizProjectTaskEntity task,
+      CurrentUserPrincipal principal,
+      OmsClient.OmsCreateCommand command,
+      Map<String, OmsClient.OmsCreateResult> resultByHandlerId,
+      Map<String, BizProjectTaskWorkOrderEntity> existingByKey
+  ) {
+    OmsClient.OmsCreateResult result = resultByHandlerId.get(command.handlerId());
+    BizProjectTaskWorkOrderEntity workOrder = existingByKey.get(command.idempotencyKey());
+    boolean create = workOrder == null;
+    if (create) {
+      workOrder = new BizProjectTaskWorkOrderEntity();
+      workOrder.setId(nextId(workOrder));
+      workOrder.setTenantId(principal.tenantId());
+      workOrder.setProjectId(project.getId());
+      workOrder.setTaskId(task.getId());
+      workOrder.setIdempotencyKey(command.idempotencyKey());
+      workOrder.setHandlerId(parseId(command.handlerId(), "PROJECT_WORK_ORDER_HANDLER_ID_INVALID"));
+      workOrder.setHandlerName(command.handlerName());
+      workOrder.setDeleted(0);
+      workOrder.setVersion(0L);
+      workOrder.setCreatedBy(principal.userId());
+    }
+    workOrder.setWorkOrderTitle(command.title());
+    workOrder.setWorkOrderDescription(command.description());
+    workOrder.setRequestPayload(command.toString());
+    workOrder.setResponsePayload(result == null ? null : result.responsePayload());
+    workOrder.setOmsWorkOrderId(result == null ? null : result.omsWorkOrderId());
+    workOrder.setSyncStatus(result == null || trimToNull(result.error()) != null ? "failed" : "synced");
+    workOrder.setSyncError(result == null ? "OMS_CREATE_NO_RESULT" : trimToNull(result.error()));
+    workOrder.setOmsStatus(result == null ? null : result.status());
+    workOrder.setOmsStatusName(result == null ? null : result.status());
+    workOrder.setIrisReviewStatus("pending");
+    workOrder.setReviewLocked(0);
+    workOrder.setUpdatedBy(principal.userId());
+    if (create) {
+      projectTaskWorkOrderMapper.insert(workOrder);
+    } else {
+      projectTaskWorkOrderMapper.updateById(workOrder);
+    }
+    return workOrder;
   }
 
   private ProjectDto toDto(
@@ -466,6 +666,50 @@ public class ProjectService {
         List.of(),
         List.of("assign")
     );
+  }
+
+  private ProjectTaskWorkOrderDto toWorkOrderDto(BizProjectTaskWorkOrderEntity workOrder) {
+    return new ProjectTaskWorkOrderDto(
+        String.valueOf(workOrder.getId()),
+        String.valueOf(workOrder.getProjectId()),
+        String.valueOf(workOrder.getTaskId()),
+        workOrder.getOmsWorkOrderId(),
+        workOrder.getIdempotencyKey(),
+        workOrder.getHandlerId() == null ? null : String.valueOf(workOrder.getHandlerId()),
+        workOrder.getHandlerName(),
+        workOrder.getWorkOrderTitle(),
+        workOrder.getWorkOrderDescription(),
+        workOrder.getIssuedAt() == null ? null : workOrder.getIssuedAt().toString(),
+        workOrder.getCompletedAt() == null ? null : workOrder.getCompletedAt().toString(),
+        workOrder.getOmsStatus(),
+        workOrder.getOmsStatusName(),
+        workOrder.getOmsResultSummary(),
+        workOrder.getOmsDetailPayload(),
+        workOrder.getOmsLogPayload(),
+        workOrder.getOmsAttachmentPayload(),
+        workOrder.getSyncStatus(),
+        workOrder.getLastSyncedAt() == null ? null : workOrder.getLastSyncedAt().toString(),
+        workOrder.getSyncError(),
+        workOrder.getIrisReviewStatus(),
+        workOrder.getIrisReviewOpinion(),
+        workOrder.getIrisReviewedAt() == null ? null : workOrder.getIrisReviewedAt().toString(),
+        workOrder.getIrisReviewedBy() == null ? null : String.valueOf(workOrder.getIrisReviewedBy()),
+        workOrder.getRectificationId() == null ? null : String.valueOf(workOrder.getRectificationId()),
+        Objects.equals(workOrder.getReviewLocked(), 1),
+        isOmsReviewable(workOrder.getOmsStatus())
+    );
+  }
+
+  private boolean isOmsReviewable(String omsStatus) {
+    return "20".equals(omsStatus) || "25".equals(omsStatus) || "30".equals(omsStatus);
+  }
+
+  private String writeJson(Object value) {
+    try {
+      return objectMapper.writeValueAsString(value);
+    } catch (JsonProcessingException exception) {
+      throw new BusinessException("PROJECT_OMS_PAYLOAD_SERIALIZE_FAILED", "PROJECT_OMS_PAYLOAD_SERIALIZE_FAILED");
+    }
   }
 
   private Long nextId(Object entity) {

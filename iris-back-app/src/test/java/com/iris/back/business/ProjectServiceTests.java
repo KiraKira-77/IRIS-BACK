@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.checklist.model.entity.BizChecklistEntity;
@@ -22,6 +24,8 @@ import com.iris.back.business.project.model.entity.BizProjectTaskEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskWorkOrderEntity;
 import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
+import com.iris.back.business.project.service.OmsClient;
 import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
@@ -62,6 +66,9 @@ class ProjectServiceTests {
   @Mock
   private IdentifierGenerator identifierGenerator;
 
+  @Mock
+  private OmsClient omsClient;
+
   private ProjectService projectService;
 
   @BeforeEach
@@ -74,7 +81,9 @@ class ProjectServiceTests {
         checklistMapper,
         checklistItemMapper,
         currentUserContext,
-        identifierGenerator
+        identifierGenerator,
+        omsClient,
+        new ObjectMapper()
     );
   }
 
@@ -241,6 +250,90 @@ class ProjectServiceTests {
         .hasMessageContaining("PROJECT_LEADER_REQUIRED");
   }
 
+  @Test
+  void createWorkOrdersCreatesOneChildRowPerHandlerWithoutDuplicatingTasks() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "pending");
+    task.setAssigneeId(2001L);
+    task.setAssigneeName("Platform Administrator");
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
+    when(identifierGenerator.nextId(any()))
+        .thenReturn(8001L)
+        .thenReturn(8002L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("201", "OMS-20260427-0001", "created", null, "{}"),
+        new OmsClient.OmsCreateResult("202", "OMS-20260427-0002", "created", null, "{}")
+    ));
+
+    var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
+        "Finance check",
+        "Please complete the check in OMS",
+        List.of(
+            new ProjectWorkOrderCreateRequest.HandlerRequest("201", "Handler A"),
+            new ProjectWorkOrderCreateRequest.HandlerRequest("202", "Handler B")
+        )
+    ));
+
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectTaskWorkOrderMapper, times(2)).insert(workOrderCaptor.capture());
+    verify(projectTaskMapper, never()).insert(any(BizProjectTaskEntity.class));
+    assertThat(workOrders).hasSize(2);
+    assertThat(workOrderCaptor.getAllValues())
+        .extracting(BizProjectTaskWorkOrderEntity::getIdempotencyKey)
+        .containsExactly("7201:201", "7201:202");
+    assertThat(workOrderCaptor.getAllValues())
+        .extracting(BizProjectTaskWorkOrderEntity::getOmsWorkOrderId)
+        .containsExactly("OMS-20260427-0001", "OMS-20260427-0002");
+    assertThat(workOrders)
+        .extracting("reviewable")
+        .containsExactly(false, false);
+    assertThat(task.getStatus()).isEqualTo("in_progress");
+  }
+
+  @Test
+  void refreshWorkOrderStoresOmsSnapshotAndSyncStatus() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+    when(omsClient.getWorkOrder("OMS-20260427-0001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
+        "OMS-20260427-0001",
+        "20",
+        "已完成",
+        true,
+        "OMS handler completed the work order",
+        "{\"status\":\"20\"}"
+    ));
+    when(omsClient.getWorkOrderLogs("OMS-20260427-0001")).thenReturn(List.of(
+        new OmsClient.OmsWorkOrderLogSnapshot("2026-04-27T10:00:00", "Handler A", "complete", "submitted")
+    ));
+    when(omsClient.getWorkOrderAttachments("OMS-20260427-0001")).thenReturn(List.of(
+        new OmsClient.OmsAttachmentSnapshot("file-1", "evidence.pdf", "/mock/evidence.pdf")
+    ));
+
+    var refreshed = projectService.refreshWorkOrder("7001", "7201", "8001");
+
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectTaskWorkOrderMapper).updateById(workOrderCaptor.capture());
+    BizProjectTaskWorkOrderEntity updated = workOrderCaptor.getValue();
+    assertThat(refreshed.id()).isEqualTo("8001");
+    assertThat(refreshed.omsStatus()).isEqualTo("20");
+    assertThat(refreshed.reviewable()).isTrue();
+    assertThat(updated.getSyncStatus()).isEqualTo("synced");
+    assertThat(updated.getSyncError()).isNull();
+    assertThat(updated.getLastSyncedAt()).isNotNull();
+    assertThat(updated.getOmsDetailPayload()).contains("\"status\":\"20\"");
+    assertThat(updated.getOmsLogPayload()).contains("submitted");
+    assertThat(updated.getOmsAttachmentPayload()).contains("evidence.pdf");
+  }
+
   private BizChecklistEntity checklist() {
     BizChecklistEntity entity = new BizChecklistEntity();
     entity.setId(8801L);
@@ -302,6 +395,23 @@ class ProjectServiceTests {
     entity.setCheckContent("Check " + id);
     entity.setCheckCriterion("Criterion " + id);
     entity.setStatus(status);
+    return entity;
+  }
+
+  private BizProjectTaskWorkOrderEntity workOrder(Long id, Long projectId, Long taskId, String omsWorkOrderId) {
+    BizProjectTaskWorkOrderEntity entity = new BizProjectTaskWorkOrderEntity();
+    entity.setId(id);
+    entity.setTenantId(1001L);
+    entity.setProjectId(projectId);
+    entity.setTaskId(taskId);
+    entity.setOmsWorkOrderId(omsWorkOrderId);
+    entity.setIdempotencyKey(taskId + ":201");
+    entity.setHandlerId(201L);
+    entity.setHandlerName("Handler A");
+    entity.setWorkOrderTitle("Finance check");
+    entity.setWorkOrderDescription("Handle in OMS");
+    entity.setIrisReviewStatus("pending");
+    entity.setReviewLocked(0);
     return entity;
   }
 

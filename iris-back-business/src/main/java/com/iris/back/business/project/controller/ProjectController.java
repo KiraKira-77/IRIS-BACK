@@ -1,12 +1,15 @@
 package com.iris.back.business.project.controller;
 
 import com.iris.back.business.project.model.dto.ProjectDto;
+import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
 import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
 import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.common.model.ApiResponse;
 import com.iris.back.common.model.PageResponse;
 import jakarta.validation.Valid;
+import java.util.List;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -67,6 +70,38 @@ public class ProjectController {
   @PostMapping("/{id}/complete")
   public ApiResponse<ProjectDto> complete(@PathVariable String id) {
     return ApiResponse.success("project completed", projectService.complete(id));
+  }
+
+  @PostMapping("/{projectId}/tasks/{taskId}/work-orders")
+  public ApiResponse<List<ProjectTaskWorkOrderDto>> createWorkOrders(
+      @PathVariable String projectId,
+      @PathVariable String taskId,
+      @Valid @RequestBody ProjectWorkOrderCreateRequest request
+  ) {
+    return ApiResponse.success(
+        "work orders created",
+        projectService.createWorkOrders(projectId, taskId, request)
+    );
+  }
+
+  @GetMapping("/{projectId}/tasks/{taskId}/work-orders")
+  public ApiResponse<List<ProjectTaskWorkOrderDto>> listTaskWorkOrders(
+      @PathVariable String projectId,
+      @PathVariable String taskId
+  ) {
+    return ApiResponse.success(projectService.listTaskWorkOrders(projectId, taskId));
+  }
+
+  @PostMapping("/{projectId}/tasks/{taskId}/work-orders/{workOrderId}/refresh")
+  public ApiResponse<ProjectTaskWorkOrderDto> refreshWorkOrder(
+      @PathVariable String projectId,
+      @PathVariable String taskId,
+      @PathVariable String workOrderId
+  ) {
+    return ApiResponse.success(
+        "work order refreshed",
+        projectService.refreshWorkOrder(projectId, taskId, workOrderId)
+    );
   }
 
   @DeleteMapping("/{id}")

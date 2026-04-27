@@ -21,6 +21,7 @@ import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskWorkOrderMapper;
 import com.iris.back.business.project.model.dto.ProjectDto;
+import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
 import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
@@ -200,6 +201,51 @@ class ProjectControllerTests {
         .andExpect(jsonPath("$.data.status").value("completed"));
   }
 
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void createWorkOrdersRouteReturnsLocalAndOmsIds() throws Exception {
+    when(projectService.createWorkOrders(org.mockito.ArgumentMatchers.eq("7001"), org.mockito.ArgumentMatchers.eq("7201"), any()))
+        .thenReturn(List.of(sampleWorkOrder()));
+
+    mockMvc.perform(post("/api/v1/projects/7001/tasks/7201/work-orders")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "title": "Finance check",
+                  "description": "Handle in OMS",
+                  "handlers": [{"handlerId": "201", "handlerName": "Handler A"}]
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[0].id").value("8001"))
+        .andExpect(jsonPath("$.data[0].omsWorkOrderId").value("OMS-20260427-0001"))
+        .andExpect(jsonPath("$.data[0].idempotencyKey").value("7201:201"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void listWorkOrdersRouteReturnsTaskWorkOrders() throws Exception {
+    when(projectService.listTaskWorkOrders("7001", "7201")).thenReturn(List.of(sampleWorkOrder()));
+
+    mockMvc.perform(get("/api/v1/projects/7001/tasks/7201/work-orders"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[0].id").value("8001"))
+        .andExpect(jsonPath("$.data[0].handlerName").value("Handler A"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void refreshWorkOrderRouteReturnsLatestOmsSnapshot() throws Exception {
+    when(projectService.refreshWorkOrder("7001", "7201", "8001")).thenReturn(sampleRefreshedWorkOrder());
+
+    mockMvc.perform(post("/api/v1/projects/7001/tasks/7201/work-orders/8001/refresh"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value("8001"))
+        .andExpect(jsonPath("$.data.omsStatus").value("20"))
+        .andExpect(jsonPath("$.data.syncStatus").value("synced"))
+        .andExpect(jsonPath("$.data.reviewable").value(true));
+  }
+
   private ProjectDto sampleProject() {
     return sampleProject("in_progress");
   }
@@ -234,6 +280,70 @@ class ProjectControllerTests {
         List.of("start", "complete"),
         "2026-04-27T10:00:00",
         "2026-04-27T10:00:00"
+    );
+  }
+
+  private ProjectTaskWorkOrderDto sampleWorkOrder() {
+    return new ProjectTaskWorkOrderDto(
+        "8001",
+        "7001",
+        "7201",
+        "OMS-20260427-0001",
+        "7201:201",
+        "201",
+        "Handler A",
+        "Finance check",
+        "Handle in OMS",
+        null,
+        null,
+        "created",
+        "created",
+        null,
+        null,
+        null,
+        null,
+        "synced",
+        null,
+        null,
+        "pending",
+        null,
+        null,
+        null,
+        null,
+        false,
+        false
+    );
+  }
+
+  private ProjectTaskWorkOrderDto sampleRefreshedWorkOrder() {
+    return new ProjectTaskWorkOrderDto(
+        "8001",
+        "7001",
+        "7201",
+        "OMS-20260427-0001",
+        "7201:201",
+        "201",
+        "Handler A",
+        "Finance check",
+        "Handle in OMS",
+        null,
+        null,
+        "20",
+        "已完成",
+        "OMS handler completed the work order",
+        "{\"status\":\"20\"}",
+        "[{\"action\":\"complete\"}]",
+        "[{\"fileName\":\"evidence.pdf\"}]",
+        "synced",
+        "2026-04-27T10:30:00",
+        null,
+        "pending",
+        null,
+        null,
+        null,
+        null,
+        false,
+        true
     );
   }
 }

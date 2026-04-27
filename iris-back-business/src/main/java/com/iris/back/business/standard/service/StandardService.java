@@ -5,9 +5,12 @@ import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.model.dto.StandardDto;
 import com.iris.back.business.standard.model.entity.BizStandardEntity;
+import com.iris.back.business.standard.model.request.StandardListQuery;
+import com.iris.back.business.standard.model.request.StandardRollbackRequest;
 import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.model.request.StandardUpsertRequest;
 import com.iris.back.common.exception.BusinessException;
+import com.iris.back.common.model.PageResponse;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.model.dto.FileAttachmentDto;
@@ -22,6 +25,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -30,6 +34,7 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 @Service
@@ -64,6 +69,33 @@ public class StandardService {
   }
 
   public List<StandardDto> list() {
+    return listAllVisibleDtos();
+  }
+
+  public PageResponse<StandardDto> list(StandardListQuery query) {
+    StandardListQuery safeQuery = query == null
+        ? new StandardListQuery(null, null, null, 1L, 10L)
+        : query;
+    List<StandardDto> filtered = applyListFilters(listAllVisibleDtos(), safeQuery);
+    filtered = withVersionCounts(filtered);
+    if (normalizeFilterText(safeQuery.status()) == null) {
+      filtered = pickLatestVersionDtos(filtered);
+    }
+
+    long pageNo = safeQuery.normalizedPage();
+    long pageSize = safeQuery.normalizedPageSize();
+    int fromIndex = (int) Math.min(filtered.size(), (pageNo - 1) * pageSize);
+    int toIndex = (int) Math.min(filtered.size(), fromIndex + pageSize);
+
+    return PageResponse.of(
+        filtered.size(),
+        pageNo,
+        pageSize,
+        filtered.subList(fromIndex, toIndex)
+    );
+  }
+
+  private List<StandardDto> listAllVisibleDtos() {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     StandardPermissionContext permissionContext = buildPermissionContext(principal);
 
@@ -84,6 +116,48 @@ public class StandardService {
               .map(entity -> toDto(entity, operatorNames, attachments.getOrDefault(entity.getId(), List.of())))
               .toList();
         }));
+  }
+
+  private List<StandardDto> applyListFilters(List<StandardDto> standards, StandardListQuery query) {
+    String keyword = normalizeFilterText(query.keyword());
+    String category = normalizeFilterText(query.category());
+    String status = normalizeFilterText(query.status());
+
+    return standards.stream()
+        .filter(item -> keyword == null
+            || containsIgnoreCase(item.title(), keyword)
+            || containsIgnoreCase(item.standardCode(), keyword))
+        .filter(item -> category == null || category.equalsIgnoreCase(item.category()))
+        .filter(item -> status == null || status.equalsIgnoreCase(item.status()))
+        .toList();
+  }
+
+  private List<StandardDto> pickLatestVersionDtos(List<StandardDto> standards) {
+    Map<String, StandardDto> latestByGroup = new LinkedHashMap<>();
+    for (StandardDto standard : standards) {
+      StandardDto existing = latestByGroup.get(standard.standardGroupId());
+      if (existing == null || compareVersionOrder(standard, existing) > 0) {
+        latestByGroup.put(standard.standardGroupId(), standard);
+      }
+    }
+    return List.copyOf(latestByGroup.values());
+  }
+
+  private int compareVersionOrder(StandardDto left, StandardDto right) {
+    int leftVersion = left.versionNumber() == null ? 0 : left.versionNumber();
+    int rightVersion = right.versionNumber() == null ? 0 : right.versionNumber();
+    if (leftVersion != rightVersion) {
+      return Integer.compare(leftVersion, rightVersion);
+    }
+    return Long.compare(parseId(left.id()), parseId(right.id()));
+  }
+
+  private boolean containsIgnoreCase(String value, String keyword) {
+    return value != null && value.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT));
+  }
+
+  private String normalizeFilterText(String value) {
+    return value == null || value.isBlank() ? null : value.trim();
   }
 
   public StandardDto get(String id) {
@@ -171,6 +245,82 @@ public class StandardService {
     return toDto(entity, loadOperatorNames(List.of(entity)), List.of());
   }
 
+  @Transactional
+  public StandardDto publish(String id) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizStandardEntity draft = requireStandard(parseId(id), principal.tenantId());
+    StandardPermissionContext permissionContext = buildPermissionContext(principal);
+    ensureCanEdit(draft, permissionContext);
+    ensureDraftPublishOnly(draft);
+
+    List<BizStandardEntity> versions = listGroupStandards(principal.tenantId(), draft.getStandardGroupId());
+    for (BizStandardEntity version : versions) {
+      if (!Objects.equals(version.getId(), draft.getId()) && "active".equalsIgnoreCase(version.getStatus())) {
+        version.setStatus("archived");
+        version.setUpdatedBy(principal.userId());
+        standardMapper.updateById(version);
+      }
+    }
+
+    draft.setStatus("active");
+    draft.setPublishDate(LocalDate.now());
+    draft.setUpdatedBy(principal.userId());
+    standardMapper.updateById(draft);
+
+    return toDto(
+        draft,
+        loadOperatorNames(List.of(draft)),
+        fileService.listByBizId(principal.tenantId(), BIZ_TYPE_STANDARD, draft.getId())
+    );
+  }
+
+  @Transactional
+  public StandardDto rollback(String id, StandardRollbackRequest request) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizStandardEntity target = requireStandard(parseId(id), principal.tenantId());
+    StandardPermissionContext permissionContext = buildPermissionContext(principal);
+    ensureCanView(target, permissionContext);
+    ensureCanCreate(target.getOwnerScopeId(), permissionContext);
+
+    List<BizStandardEntity> versions = listGroupStandards(principal.tenantId(), target.getStandardGroupId());
+    String requestedVersion = normalizeRequiredText(request.version());
+    ensureVersionNotDuplicated(target.getStandardGroupId(), requestedVersion, versions);
+
+    BizStandardEntity entity = new BizStandardEntity();
+    entity.setId(nextId(entity));
+    entity.setTenantId(target.getTenantId());
+    entity.setStandardGroupId(target.getStandardGroupId());
+    entity.setDeleted(0);
+    entity.setVersion(0L);
+    entity.setCreatedBy(principal.userId());
+    entity.setUpdatedBy(principal.userId());
+    entity.setStandardCode(target.getStandardCode());
+    entity.setTitle(target.getTitle());
+    entity.setCategory(target.getCategory());
+    entity.setStandardVersion(requestedVersion);
+    entity.setStatus("draft");
+    entity.setPublishDate(null);
+    entity.setDescription(target.getDescription());
+    entity.setVersionNumber(nextVersionNumber(versions));
+    entity.setPreviousVersionId(target.getId());
+    entity.setVisibilityLevel(target.getVisibilityLevel());
+    entity.setOwnerScopeId(requireOwnerScope(target.getOwnerScopeId(), target.getTenantId()).getId());
+    entity.setSharedScopeIds(String.join(",", normalizeScopeIds(
+        splitCommaValues(target.getSharedScopeIds()),
+        target.getOwnerScopeId(),
+        target.getTenantId()
+    )));
+    entity.setChangeLog("[回退] 回退至 " + target.getStandardVersion() + "：" + normalizeRequiredText(request.reason()));
+    standardMapper.insert(entity);
+    fileService.copyBindings(BIZ_TYPE_STANDARD, target.getTenantId(), target.getId(), entity.getId());
+
+    return toDto(
+        entity,
+        loadOperatorNames(List.of(entity)),
+        fileService.listByBizId(principal.tenantId(), BIZ_TYPE_STANDARD, entity.getId())
+    );
+  }
+
   public StandardDto update(String id, StandardUpsertRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     ensureTenantAccess(request.tenantId(), principal.tenantId());
@@ -213,6 +363,30 @@ public class StandardService {
     BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
     ensureCanEdit(entity, buildPermissionContext(principal));
     fileService.delete(BIZ_TYPE_STANDARD, principal.tenantId(), entity.getId(), parseId(fileId));
+  }
+
+  public List<StandardDto> versions(String id) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizStandardEntity current = requireStandard(parseId(id), principal.tenantId());
+    StandardPermissionContext permissionContext = buildPermissionContext(principal);
+    ensureCanView(current, permissionContext);
+    List<BizStandardEntity> versions = listGroupStandards(principal.tenantId(), current.getStandardGroupId())
+        .stream()
+        .filter(entity -> canView(entity, permissionContext))
+        .sorted(Comparator.comparing(
+            (BizStandardEntity entity) -> entity.getVersionNumber() == null ? 0 : entity.getVersionNumber()
+        ).reversed())
+        .toList();
+    Map<Long, String> operatorNames = loadOperatorNames(versions);
+    Map<Long, List<FileAttachmentDto>> attachments = fileService.listByBizIds(
+        principal.tenantId(),
+        BIZ_TYPE_STANDARD,
+        versions.stream().map(BizStandardEntity::getId).toList()
+    );
+    return versions.stream()
+        .map(entity -> toDto(entity, operatorNames, attachments.getOrDefault(entity.getId(), List.of())))
+        .map(dto -> withVersionCount(dto, versions.size()))
+        .toList();
   }
 
   private List<BizStandardEntity> listGroupStandards(Long tenantId, String standardGroupId) {
@@ -377,6 +551,7 @@ public class StandardService {
         entity.getCreatedAt() == null ? null : entity.getCreatedAt().toString(),
         entity.getUpdatedAt() == null ? null : entity.getUpdatedAt().toString(),
         entity.getVersionNumber(),
+        null,
         entity.getPreviousVersionId() == null ? null : String.valueOf(entity.getPreviousVersionId()),
         entity.getVisibilityLevel(),
         entity.getOwnerScopeId() == null ? null : String.valueOf(entity.getOwnerScopeId()),
@@ -385,6 +560,39 @@ public class StandardService {
             .toList(),
         entity.getChangeLog(),
         resolveOperatorName(entity, operatorNames)
+    );
+  }
+
+  private List<StandardDto> withVersionCounts(List<StandardDto> standards) {
+    Map<String, Long> counts = standards.stream()
+        .collect(Collectors.groupingBy(StandardDto::standardGroupId, Collectors.counting()));
+    return standards.stream()
+        .map(dto -> withVersionCount(dto, counts.getOrDefault(dto.standardGroupId(), 1L).intValue()))
+        .toList();
+  }
+
+  private StandardDto withVersionCount(StandardDto dto, Integer versionCount) {
+    return new StandardDto(
+        dto.id(),
+        dto.standardGroupId(),
+        dto.standardCode(),
+        dto.title(),
+        dto.category(),
+        dto.version(),
+        dto.publishDate(),
+        dto.status(),
+        dto.attachments(),
+        dto.description(),
+        dto.createdAt(),
+        dto.updatedAt(),
+        dto.versionNumber(),
+        versionCount,
+        dto.previousVersionId(),
+        dto.visibilityLevel(),
+        dto.ownerScopeId(),
+        dto.grants(),
+        dto.changeLog(),
+        dto.operatorName()
     );
   }
 
@@ -469,6 +677,15 @@ public class StandardService {
       throw new BusinessException(
           "STANDARD_DELETE_ONLY_DRAFT",
           "only draft standard can be deleted: " + entity.getId()
+      );
+    }
+  }
+
+  private void ensureDraftPublishOnly(BizStandardEntity entity) {
+    if (!isDraft(entity)) {
+      throw new BusinessException(
+          "STANDARD_PUBLISH_ONLY_DRAFT",
+          "only draft standard can be published: " + entity.getId()
       );
     }
   }

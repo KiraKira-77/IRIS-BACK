@@ -5,12 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.model.entity.BizStandardEntity;
+import com.iris.back.business.standard.model.request.StandardListQuery;
+import com.iris.back.business.standard.model.request.StandardRollbackRequest;
 import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.model.request.StandardUpsertRequest;
 import com.iris.back.business.standard.service.StandardService;
@@ -153,6 +156,78 @@ class StandardServiceTests {
     var result = standardService.list();
 
     assertThat(result).extracting(item -> item.id()).containsExactly("9901");
+  }
+
+  @Test
+  void listQueryFiltersVisibleStandardsAndReturnsRequestedPage() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+
+    BizStandardEntity first = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    first.setTitle("Finance Baseline");
+    first.setCategory("internal");
+    first.setStatus("active");
+    first.setVisibilityLevel("SCOPED");
+    first.setOwnerScopeId(9001L);
+    first.setUpdatedBy(2004L);
+
+    BizStandardEntity second = standard(9902L, "group-2", "STD-FIN-002", "V1.0", 1, null);
+    second.setTitle("Finance Review");
+    second.setCategory("internal");
+    second.setStatus("active");
+    second.setVisibilityLevel("SCOPED");
+    second.setOwnerScopeId(9001L);
+    second.setUpdatedBy(2004L);
+
+    BizStandardEntity hiddenByKeyword = standard(9903L, "group-3", "STD-IT-001", "V1.0", 1, null);
+    hiddenByKeyword.setTitle("IT Baseline");
+    hiddenByKeyword.setCategory("internal");
+    hiddenByKeyword.setStatus("active");
+    hiddenByKeyword.setVisibilityLevel("SCOPED");
+    hiddenByKeyword.setOwnerScopeId(9001L);
+    hiddenByKeyword.setUpdatedBy(2004L);
+
+    when(standardMapper.selectList(any())).thenReturn(List.of(first, second, hiddenByKeyword));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0)
+    ));
+    when(userMapper.selectBatchIds(List.of(2004L))).thenReturn(List.of(user(2004L, "Senior Auditor")));
+
+    var page = standardService.list(new StandardListQuery("Finance", "internal", "active", 2L, 1L));
+
+    assertThat(page.getTotal()).isEqualTo(2);
+    assertThat(page.getPageNo()).isEqualTo(2);
+    assertThat(page.getPageSize()).isEqualTo(1);
+    assertThat(page.getRecords()).extracting(item -> item.id()).containsExactly("9902");
+  }
+
+  @Test
+  void listQueryReturnsLatestVersionWithGroupVersionCountWhenStatusIsNotSpecified() {
+    mockCurrentUser(2001L, List.of("SUPER_ADMIN"));
+
+    BizStandardEntity archived = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    archived.setTitle("Finance Baseline");
+    archived.setCategory("internal");
+    archived.setStatus("archived");
+    archived.setVisibilityLevel("SCOPED");
+    archived.setOwnerScopeId(9001L);
+
+    BizStandardEntity active = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    active.setTitle("Finance Baseline");
+    active.setCategory("internal");
+    active.setStatus("active");
+    active.setVisibilityLevel("SCOPED");
+    active.setOwnerScopeId(9001L);
+
+    when(standardMapper.selectList(any())).thenReturn(List.of(archived, active));
+
+    var page = standardService.list(new StandardListQuery(null, null, null, 1L, 10L));
+
+    assertThat(page.getTotal()).isEqualTo(1);
+    assertThat(page.getRecords()).singleElement().satisfies(item -> {
+      assertThat(item.id()).isEqualTo("9902");
+      assertThat(item.version()).isEqualTo("V2.0");
+      assertThat(item.versionCount()).isEqualTo(2);
+    });
   }
 
   @Test
@@ -500,6 +575,92 @@ class StandardServiceTests {
   }
 
   @Test
+  void publishArchivesActiveVersionAndPublishesDraftAtomically() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity active = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    active.setTitle("Finance Standard");
+    active.setCategory("internal");
+    active.setStatus("active");
+    active.setPublishDate(LocalDate.of(2026, 4, 20));
+    active.setVisibilityLevel("SCOPED");
+    active.setOwnerScopeId(9001L);
+
+    BizStandardEntity draft = standard(9903L, "group-1", "STD-FIN-001", "V3.0", 3, 9902L);
+    draft.setTitle("Finance Standard");
+    draft.setCategory("internal");
+    draft.setStatus("draft");
+    draft.setVisibilityLevel("SCOPED");
+    draft.setOwnerScopeId(9001L);
+
+    when(standardMapper.selectById(9903L)).thenReturn(draft);
+    when(standardMapper.selectList(any())).thenReturn(List.of(active, draft));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+
+    var published = standardService.publish("9903");
+
+    ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
+    verify(standardMapper, times(2)).updateById(captor.capture());
+
+    assertThat(published.status()).isEqualTo("active");
+    assertThat(published.publishDate()).isEqualTo(LocalDate.now().toString());
+    assertThat(captor.getAllValues()).anySatisfy(entity -> {
+      assertThat(entity.getId()).isEqualTo(9902L);
+      assertThat(entity.getStatus()).isEqualTo("archived");
+      assertThat(entity.getPublishDate()).isEqualTo(LocalDate.of(2026, 4, 20));
+    });
+    assertThat(captor.getAllValues()).anySatisfy(entity -> {
+      assertThat(entity.getId()).isEqualTo(9903L);
+      assertThat(entity.getStatus()).isEqualTo("active");
+      assertThat(entity.getPublishDate()).isEqualTo(LocalDate.now());
+    });
+  }
+
+  @Test
+  void rollbackCreatesDraftFromHistoricalVersionAndCopiesAttachments() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity archived = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    archived.setTitle("Finance Standard");
+    archived.setCategory("internal");
+    archived.setStatus("archived");
+    archived.setDescription("old controls");
+    archived.setVisibilityLevel("SCOPED");
+    archived.setOwnerScopeId(9001L);
+    archived.setSharedScopeIds("9002");
+
+    BizStandardEntity active = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    active.setStatus("active");
+    active.setOwnerScopeId(9001L);
+
+    when(standardMapper.selectById(9901L)).thenReturn(archived);
+    when(standardMapper.selectList(any())).thenReturn(List.of(archived, active));
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMapper.selectById(9002L)).thenReturn(scope(9002L, 1001L));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+    when(identifierGenerator.nextId(any())).thenReturn(9904L);
+
+    var draft = standardService.rollback(
+        "9901",
+        new StandardRollbackRequest("V3.0", "restore old controls")
+    );
+
+    ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
+    verify(standardMapper).insert(captor.capture());
+    verify(fileService).copyBindings("STANDARD", 1001L, 9901L, 9904L);
+
+    assertThat(draft.id()).isEqualTo("9904");
+    assertThat(draft.version()).isEqualTo("V3.0");
+    assertThat(draft.status()).isEqualTo("draft");
+    assertThat(draft.previousVersionId()).isEqualTo("9901");
+    assertThat(draft.changeLog()).isEqualTo("[回退] 回退至 V1.0：restore old controls");
+    assertThat(captor.getValue().getVersionNumber()).isEqualTo(3);
+    assertThat(captor.getValue().getSharedScopeIds()).isEqualTo("9002");
+  }
+
+  @Test
   void uploadAttachmentUsesGenericFileServiceAfterPermissionCheck() {
     mockCurrentUser(2002L, List.of("AUDITOR"));
     BizStandardEntity entity = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
@@ -600,9 +761,6 @@ class StandardServiceTests {
     archived.setVisibilityLevel("SCOPED");
     archived.setOwnerScopeId(9001L);
     when(standardMapper.selectById(9902L)).thenReturn(archived);
-    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
-        scopeMember(9001L, 2002L, 1, 1, 1, 1, 0)
-    ));
 
     assertThatThrownBy(() -> standardService.delete("9902"))
         .isInstanceOf(BusinessException.class)

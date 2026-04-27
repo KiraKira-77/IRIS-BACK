@@ -13,8 +13,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.iris.back.auth.service.AuthService;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.model.dto.StandardDto;
+import com.iris.back.business.standard.model.request.StandardListQuery;
+import com.iris.back.business.standard.model.request.StandardRollbackRequest;
 import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.service.StandardService;
+import com.iris.back.common.model.PageResponse;
 import com.iris.back.framework.security.AuthSessionStore;
 import com.iris.back.system.model.dto.FileAttachmentDto;
 import com.iris.back.system.mapper.SysOrgMapper;
@@ -104,7 +107,11 @@ class StandardControllerTests {
   @Test
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
   void listReturnsRealStandardPayload() throws Exception {
-    when(standardService.list()).thenReturn(List.of(new StandardDto(
+    when(standardService.list(any(StandardListQuery.class))).thenReturn(PageResponse.of(
+        1,
+        1,
+        10,
+        List.of(new StandardDto(
         "9901",
         "std-001",
         "STD-FIN-001",
@@ -124,17 +131,24 @@ class StandardControllerTests {
         List.of(new StandardDto.ScopeGrantDto("9002", List.of("view"))),
         "initial draft",
         "Platform Administrator"
-    )));
+    ))));
 
-    mockMvc.perform(get("/api/v1/standards"))
+    mockMvc.perform(get("/api/v1/standards")
+            .param("keyword", "Finance")
+            .param("category", "internal")
+            .param("status", "active")
+            .param("page", "1")
+            .param("pageSize", "10"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.success").value(true))
-        .andExpect(jsonPath("$.data[0].standardCode").value("STD-FIN-001"))
-        .andExpect(jsonPath("$.data[0].title").value("Finance Standard"))
-        .andExpect(jsonPath("$.data[0].visibilityLevel").value("SCOPED"))
-        .andExpect(jsonPath("$.data[0].ownerScopeId").value("9001"))
-        .andExpect(jsonPath("$.data[0].operatorName").value("Platform Administrator"))
-        .andExpect(jsonPath("$.data[0].grants[0].scopeId").value("9002"));
+        .andExpect(jsonPath("$.data.total").value(1))
+        .andExpect(jsonPath("$.data.pageNo").value(1))
+        .andExpect(jsonPath("$.data.records[0].standardCode").value("STD-FIN-001"))
+        .andExpect(jsonPath("$.data.records[0].title").value("Finance Standard"))
+        .andExpect(jsonPath("$.data.records[0].visibilityLevel").value("SCOPED"))
+        .andExpect(jsonPath("$.data.records[0].ownerScopeId").value("9001"))
+        .andExpect(jsonPath("$.data.records[0].operatorName").value("Platform Administrator"))
+        .andExpect(jsonPath("$.data.records[0].grants[0].scopeId").value("9002"));
   }
 
   @Test
@@ -231,6 +245,81 @@ class StandardControllerTests {
         .andExpect(jsonPath("$.data.previousVersionId").value("9902"))
         .andExpect(jsonPath("$.data.operatorName").value("Platform Administrator"))
         .andExpect(jsonPath("$.data.changeLog").value("upgrade draft"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void publishReturnsPublishedStandardPayload() throws Exception {
+    when(standardService.publish("9903")).thenReturn(new StandardDto(
+        "9903",
+        "9902",
+        "STD-FIN-002",
+        "Finance Standard",
+        "internal",
+        "V2.0",
+        "2026-04-24",
+        "active",
+        List.of(),
+        "desc",
+        "2026-04-24T00:00:00",
+        "2026-04-24T00:00:00",
+        2,
+        "9902",
+        "PUBLIC",
+        "9001",
+        List.of(),
+        "upgrade draft",
+        "Platform Administrator"
+    ));
+
+    mockMvc.perform(post("/api/v1/standards/9903/publish"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.message").value("standard published"))
+        .andExpect(jsonPath("$.data.status").value("active"))
+        .andExpect(jsonPath("$.data.publishDate").value("2026-04-24"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void rollbackReturnsCreatedDraftPayload() throws Exception {
+    when(standardService.rollback(org.mockito.ArgumentMatchers.eq("9901"), any(StandardRollbackRequest.class)))
+        .thenReturn(new StandardDto(
+            "9904",
+            "9902",
+            "STD-FIN-002",
+            "Finance Standard",
+            "internal",
+            "V3.0",
+            null,
+            "draft",
+            List.of(),
+            "desc",
+            "2026-04-24T00:00:00",
+            "2026-04-24T00:00:00",
+            3,
+            "9901",
+            "PUBLIC",
+            "9001",
+            List.of(),
+            "[回退] 回退至 V1.0：restore old controls",
+            "Platform Administrator"
+        ));
+
+    mockMvc.perform(post("/api/v1/standards/9901/rollback")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "version": "V3.0",
+                  "reason": "restore old controls"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.message").value("standard rollback draft created"))
+        .andExpect(jsonPath("$.data.id").value("9904"))
+        .andExpect(jsonPath("$.data.status").value("draft"))
+        .andExpect(jsonPath("$.data.previousVersionId").value("9901"));
   }
 
   @Test

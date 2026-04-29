@@ -13,6 +13,8 @@ import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.checklist.model.entity.BizChecklistEntity;
 import com.iris.back.business.checklist.model.entity.BizChecklistItemEntity;
+import com.iris.back.business.plan.mapper.BizPlanItemMapper;
+import com.iris.back.business.plan.model.entity.BizPlanItemEntity;
 import com.iris.back.business.project.mapper.BizProjectMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskMapper;
@@ -62,6 +64,9 @@ class ProjectServiceTests {
   private BizChecklistItemMapper checklistItemMapper;
 
   @Mock
+  private BizPlanItemMapper planItemMapper;
+
+  @Mock
   private CurrentUserContext currentUserContext;
 
   @Mock
@@ -81,6 +86,7 @@ class ProjectServiceTests {
         projectTaskWorkOrderMapper,
         checklistMapper,
         checklistItemMapper,
+        planItemMapper,
         currentUserContext,
         identifierGenerator,
         omsClient,
@@ -148,6 +154,8 @@ class ProjectServiceTests {
     assertThat(created.progress()).isZero();
     assertThat(projectCaptor.getValue().getTenantId()).isEqualTo(1001L);
     assertThat(projectCaptor.getValue().getStatus()).isEqualTo("not_started");
+    assertThat(projectCaptor.getValue().getTagIds()).isEmpty();
+    assertThat(projectCaptor.getValue().getTagNames()).isEmpty();
     assertThat(taskCaptor.getAllValues())
         .extracting(BizProjectTaskEntity::getChecklistItemId)
         .containsExactly(9901L, 9902L);
@@ -156,6 +164,46 @@ class ProjectServiceTests {
           assertThat(task.getProjectId()).isEqualTo(7001L);
           assertThat(task.getStatus()).isEqualTo("pending");
         });
+  }
+
+  @Test
+  void createFromPlanLinksPlanItemsToCreatedProject() {
+    mockCurrentUser();
+    when(identifierGenerator.nextId(any()))
+        .thenReturn(7001L)
+        .thenReturn(7101L)
+        .thenReturn(7201L);
+    when(checklistMapper.selectList(any())).thenReturn(List.of(checklist()));
+    when(checklistItemMapper.selectList(any())).thenReturn(List.of(
+        checklistItem(9901L, "Bank reconciliation", "Complete by the 5th day")
+    ));
+
+    projectService.create(new ProjectUpsertRequest(
+        "PRJ-2026-001",
+        "2026 Finance Control Project",
+        "plan",
+        "9001",
+        "2026 January Control Plan",
+        "Finance controls",
+        "2026-04-27",
+        null,
+        List.of(),
+        List.of(),
+        "2001",
+        "Platform Administrator",
+        List.of("8801"),
+        List.of(new ProjectUpsertRequest.ProjectMemberRequest(
+            "2001",
+            "Platform Administrator",
+            "E2001",
+            "Finance",
+            "leader"
+        ))
+    ));
+
+    ArgumentCaptor<BizPlanItemEntity> planItemCaptor = ArgumentCaptor.forClass(BizPlanItemEntity.class);
+    verify(planItemMapper).update(planItemCaptor.capture(), any());
+    assertThat(planItemCaptor.getValue().getProjectId()).isEqualTo("7001");
   }
 
   @Test

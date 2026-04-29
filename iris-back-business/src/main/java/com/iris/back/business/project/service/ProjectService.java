@@ -1,6 +1,7 @@
 package com.iris.back.business.project.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -8,6 +9,8 @@ import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.checklist.model.entity.BizChecklistEntity;
 import com.iris.back.business.checklist.model.entity.BizChecklistItemEntity;
+import com.iris.back.business.plan.mapper.BizPlanItemMapper;
+import com.iris.back.business.plan.model.entity.BizPlanItemEntity;
 import com.iris.back.business.project.mapper.BizProjectMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskMapper;
@@ -52,6 +55,7 @@ public class ProjectService {
   private final BizProjectTaskWorkOrderMapper projectTaskWorkOrderMapper;
   private final BizChecklistMapper checklistMapper;
   private final BizChecklistItemMapper checklistItemMapper;
+  private final BizPlanItemMapper planItemMapper;
   private final CurrentUserContext currentUserContext;
   private final IdentifierGenerator identifierGenerator;
   private final OmsClient omsClient;
@@ -64,6 +68,7 @@ public class ProjectService {
       BizProjectTaskWorkOrderMapper projectTaskWorkOrderMapper,
       BizChecklistMapper checklistMapper,
       BizChecklistItemMapper checklistItemMapper,
+      BizPlanItemMapper planItemMapper,
       CurrentUserContext currentUserContext,
       IdentifierGenerator identifierGenerator,
       OmsClient omsClient,
@@ -75,6 +80,7 @@ public class ProjectService {
     this.projectTaskWorkOrderMapper = projectTaskWorkOrderMapper;
     this.checklistMapper = checklistMapper;
     this.checklistItemMapper = checklistItemMapper;
+    this.planItemMapper = planItemMapper;
     this.currentUserContext = currentUserContext;
     this.identifierGenerator = identifierGenerator;
     this.omsClient = omsClient;
@@ -310,6 +316,7 @@ public class ProjectService {
 
     List<BizProjectMemberEntity> members = createMembers(project.getId(), principal, request.members());
     List<BizProjectTaskEntity> tasks = createTasks(project.getId(), principal, checklists, checklistItems);
+    linkPlanItemsToProject(project, principal);
     return toDto(project, members, tasks);
   }
 
@@ -327,8 +334,8 @@ public class ProjectService {
     project.setDescription(trimToNull(request.description()));
     project.setStartDate(parseRequiredDate(request.startDate(), "PROJECT_START_DATE_INVALID"));
     project.setEndDate(parseNullableDate(request.endDate(), "PROJECT_END_DATE_INVALID"));
-    project.setTagIds(joinCsv(request.tagIds()));
-    project.setTagNames(joinCsv(request.tagNames()));
+    project.setTagIds("");
+    project.setTagNames("");
     project.setLeaderId(parseId(normalizeRequiredText(request.leaderId(), "PROJECT_LEADER_ID_REQUIRED"),
         "PROJECT_LEADER_ID_INVALID"));
     project.setLeaderName(normalizeRequiredText(request.leaderName(), "PROJECT_LEADER_NAME_REQUIRED"));
@@ -399,6 +406,19 @@ public class ProjectService {
           return task;
         })
         .toList();
+  }
+
+  private void linkPlanItemsToProject(BizProjectEntity project, CurrentUserPrincipal principal) {
+    if (project.getPlanId() == null) {
+      return;
+    }
+
+    BizPlanItemEntity planItem = new BizPlanItemEntity();
+    planItem.setProjectId(String.valueOf(project.getId()));
+    planItem.setUpdatedBy(principal.userId());
+    planItemMapper.update(planItem, new LambdaUpdateWrapper<BizPlanItemEntity>()
+        .eq(BizPlanItemEntity::getTenantId, principal.tenantId())
+        .eq(BizPlanItemEntity::getPlanId, project.getPlanId()));
   }
 
   private List<BizChecklistEntity> loadChecklists(Long tenantId, List<Long> checklistIds) {

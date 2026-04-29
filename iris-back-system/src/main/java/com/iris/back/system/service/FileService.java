@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.common.exception.BusinessException;
+import com.iris.back.common.util.DateTimeFormatters;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.config.MinioProperties;
@@ -224,7 +225,7 @@ public class FileService {
         view.getFileSize(),
         view.getContentType(),
         view.getUploadedBy(),
-        view.getUploadedAt() == null ? null : view.getUploadedAt().toString()
+        DateTimeFormatters.formatDateTime(view.getUploadedAt())
     );
   }
 

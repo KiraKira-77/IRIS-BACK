@@ -1,6 +1,7 @@
 package com.iris.back.business.project.service;
 
 import com.iris.back.business.project.model.dto.ProjectTaskDto;
+import com.iris.back.common.util.DateTimeFormatters;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -41,7 +42,7 @@ public class MockOmsClient implements OmsClient {
   @Override
   public List<OmsWorkOrderLogSnapshot> getWorkOrderLogs(String omsWorkOrderId) {
     return List.of(new OmsWorkOrderLogSnapshot(
-        LocalDateTime.now().toString(),
+        DateTimeFormatters.formatDateTime(LocalDateTime.now()),
         "OMS",
         "complete",
         "Mock OMS log for " + omsWorkOrderId

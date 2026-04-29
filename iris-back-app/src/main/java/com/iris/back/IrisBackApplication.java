@@ -7,7 +7,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 @SpringBootApplication
 @MapperScan({
     "com.iris.back.system.mapper",
-    "com.iris.back.business.standard.mapper"
+    "com.iris.back.business.standard.mapper",
+    "com.iris.back.business.checklist.mapper",
+    "com.iris.back.business.plan.mapper",
+    "com.iris.back.business.project.mapper"
 })
 public class IrisBackApplication {
 

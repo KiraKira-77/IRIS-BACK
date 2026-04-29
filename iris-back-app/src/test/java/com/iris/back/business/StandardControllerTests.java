@@ -11,6 +11,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.iris.back.auth.service.AuthService;
+import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
+import com.iris.back.business.checklist.mapper.BizChecklistMapper;
+import com.iris.back.business.plan.mapper.BizPlanItemMapper;
+import com.iris.back.business.plan.mapper.BizPlanMapper;
+import com.iris.back.business.plan.service.PlanService;
+import com.iris.back.business.project.mapper.BizProjectMapper;
+import com.iris.back.business.project.mapper.BizProjectMemberMapper;
+import com.iris.back.business.project.mapper.BizProjectOperationLogMapper;
+import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
+import com.iris.back.business.project.mapper.BizProjectTaskMapper;
+import com.iris.back.business.project.mapper.BizProjectTaskWorkOrderMapper;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.model.dto.StandardDto;
 import com.iris.back.business.standard.model.request.StandardListQuery;
@@ -103,6 +114,39 @@ class StandardControllerTests {
 
   @MockBean
   private BizStandardMapper bizStandardMapper;
+
+  @MockBean
+  private BizChecklistMapper bizChecklistMapper;
+
+  @MockBean
+  private BizChecklistItemMapper bizChecklistItemMapper;
+
+  @MockBean
+  private BizPlanMapper bizPlanMapper;
+
+  @MockBean
+  private BizPlanItemMapper bizPlanItemMapper;
+
+  @MockBean
+  private BizProjectMapper bizProjectMapper;
+
+  @MockBean
+  private BizProjectMemberMapper bizProjectMemberMapper;
+
+  @MockBean
+  private BizProjectTaskMapper bizProjectTaskMapper;
+
+  @MockBean
+  private BizProjectTaskWorkOrderMapper bizProjectTaskWorkOrderMapper;
+
+  @MockBean
+  private BizProjectRectificationMapper bizProjectRectificationMapper;
+
+  @MockBean
+  private BizProjectOperationLogMapper bizProjectOperationLogMapper;
+
+  @MockBean
+  private PlanService planService;
 
   @Test
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")

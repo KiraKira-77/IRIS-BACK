@@ -1,0 +1,43 @@
+CREATE TABLE IF NOT EXISTS biz_control_checklist (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  checklist_code VARCHAR(64) NOT NULL,
+  checklist_name VARCHAR(255) NOT NULL,
+  description TEXT NULL,
+  checklist_version VARCHAR(64) NOT NULL,
+  primary_tag_id VARCHAR(64) NOT NULL,
+  secondary_tag_ids VARCHAR(500) NULL,
+  upload_date DATE NULL,
+  status VARCHAR(32) NOT NULL,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_biz_control_checklist_code (tenant_id, checklist_code),
+  KEY idx_biz_control_checklist_status (tenant_id, status),
+  KEY idx_biz_control_checklist_tag (tenant_id, primary_tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS biz_control_checklist_item (
+  id BIGINT NOT NULL PRIMARY KEY,
+  tenant_id BIGINT NOT NULL,
+  checklist_id BIGINT NOT NULL,
+  sequence_no INT NOT NULL DEFAULT 1,
+  content TEXT NOT NULL,
+  criterion TEXT NOT NULL,
+  control_frequency VARCHAR(64) NOT NULL,
+  evaluation_type VARCHAR(64) NOT NULL,
+  organization_ids VARCHAR(500) NULL,
+  remark VARCHAR(500) NULL,
+  deleted TINYINT NOT NULL DEFAULT 0,
+  version BIGINT NOT NULL DEFAULT 0,
+  created_by BIGINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by BIGINT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_biz_control_checklist_item_parent (tenant_id, checklist_id),
+  KEY idx_biz_control_checklist_item_frequency (tenant_id, control_frequency)
+);

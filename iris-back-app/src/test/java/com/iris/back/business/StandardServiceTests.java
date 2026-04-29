@@ -29,6 +29,7 @@ import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysUserEntity;
 import com.iris.back.system.service.FileService;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -227,6 +228,26 @@ class StandardServiceTests {
       assertThat(item.id()).isEqualTo("9902");
       assertThat(item.version()).isEqualTo("V2.0");
       assertThat(item.versionCount()).isEqualTo(2);
+    });
+  }
+
+  @Test
+  void formatsTimestampsWithoutIsoSeparator() {
+    mockCurrentUser(2001L, List.of("SUPER_ADMIN"));
+    BizStandardEntity entity = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    entity.setTitle("Finance Baseline");
+    entity.setCategory("internal");
+    entity.setStatus("active");
+    entity.setVisibilityLevel("PUBLIC");
+    entity.setCreatedAt(LocalDateTime.of(2026, 4, 29, 13, 6, 50));
+    entity.setUpdatedAt(LocalDateTime.of(2026, 4, 29, 13, 7, 8));
+    when(standardMapper.selectList(any())).thenReturn(List.of(entity));
+
+    var result = standardService.list();
+
+    assertThat(result).singleElement().satisfies(item -> {
+      assertThat(item.createdAt()).isEqualTo("2026-04-29 13:06:50");
+      assertThat(item.updatedAt()).isEqualTo("2026-04-29 13:07:08");
     });
   }
 

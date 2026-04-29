@@ -30,6 +30,7 @@ import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
+import java.time.LocalDateTime;
 import java.util.List;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -177,6 +178,60 @@ class ProjectServiceTests {
       assertThat(project.id()).isEqualTo("7001");
       assertThat(project.taskCount()).isEqualTo(2);
       assertThat(project.progress()).isEqualTo(50);
+    });
+  }
+
+  @Test
+  void formatsProjectAndTaskTimestampsWithoutIsoSeparator() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    project.setArchiveStartedAt(LocalDateTime.of(2026, 4, 29, 9, 10, 11));
+    project.setArchiveCompletedAt(LocalDateTime.of(2026, 4, 29, 10, 11, 12));
+    project.setCreatedAt(LocalDateTime.of(2026, 4, 29, 13, 6, 50));
+    project.setUpdatedAt(LocalDateTime.of(2026, 4, 29, 13, 7, 8));
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setIssuedAt(LocalDateTime.of(2026, 4, 29, 11, 12, 13));
+    task.setCompletedAt(LocalDateTime.of(2026, 4, 29, 12, 13, 14));
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(7001L, 2001L, "leader")));
+    when(projectMapper.selectList(any())).thenReturn(List.of(project));
+    when(projectTaskMapper.selectList(any())).thenReturn(List.of(task));
+
+    var page = projectService.list(new ProjectListQuery(null, null, null, null, null, null, 1L, 10L));
+
+    assertThat(page.getRecords()).singleElement().satisfies(item -> {
+      assertThat(item.archiveStartedAt()).isEqualTo("2026-04-29 09:10:11");
+      assertThat(item.archiveCompletedAt()).isEqualTo("2026-04-29 10:11:12");
+      assertThat(item.createdAt()).isEqualTo("2026-04-29 13:06:50");
+      assertThat(item.updatedAt()).isEqualTo("2026-04-29 13:07:08");
+      assertThat(item.tasks()).singleElement().satisfies(resultTask -> {
+        assertThat(resultTask.issuedAt()).isEqualTo("2026-04-29 11:12:13");
+        assertThat(resultTask.completedAt()).isEqualTo("2026-04-29 12:13:14");
+      });
+    });
+  }
+
+  @Test
+  void formatsWorkOrderTimestampsWithoutIsoSeparator() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260429-0001");
+    workOrder.setIssuedAt(LocalDateTime.of(2026, 4, 29, 11, 12, 13));
+    workOrder.setCompletedAt(LocalDateTime.of(2026, 4, 29, 12, 13, 14));
+    workOrder.setLastSyncedAt(LocalDateTime.of(2026, 4, 29, 13, 14, 15));
+    workOrder.setIrisReviewedAt(LocalDateTime.of(2026, 4, 29, 14, 15, 16));
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
+
+    var result = projectService.listTaskWorkOrders("7001", "7201");
+
+    assertThat(result).singleElement().satisfies(item -> {
+      assertThat(item.issuedAt()).isEqualTo("2026-04-29 11:12:13");
+      assertThat(item.completedAt()).isEqualTo("2026-04-29 12:13:14");
+      assertThat(item.lastSyncedAt()).isEqualTo("2026-04-29 13:14:15");
+      assertThat(item.irisReviewedAt()).isEqualTo("2026-04-29 14:15:16");
     });
   }
 

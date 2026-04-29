@@ -25,6 +25,7 @@ import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.common.model.PageResponse;
+import com.iris.back.common.util.DateTimeFormatters;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import java.time.LocalDate;
@@ -614,8 +615,8 @@ public class ProjectService {
         project.getLeaderName(),
         splitCsv(project.getChecklistIds()),
         project.getArchiveStatus(),
-        project.getArchiveStartedAt() == null ? null : project.getArchiveStartedAt().toString(),
-        project.getArchiveCompletedAt() == null ? null : project.getArchiveCompletedAt().toString(),
+        DateTimeFormatters.formatDateTime(project.getArchiveStartedAt()),
+        DateTimeFormatters.formatDateTime(project.getArchiveCompletedAt()),
         project.getArchiveError(),
         taskCount,
         (int) passedCount,
@@ -624,8 +625,8 @@ public class ProjectService {
         members.stream().map(this::toMemberDto).toList(),
         tasks.stream().map(this::toTaskDto).toList(),
         List.of("update", "delete", "start"),
-        project.getCreatedAt() == null ? null : project.getCreatedAt().toString(),
-        project.getUpdatedAt() == null ? null : project.getUpdatedAt().toString()
+        DateTimeFormatters.formatDateTime(project.getCreatedAt()),
+        DateTimeFormatters.formatDateTime(project.getUpdatedAt())
     );
   }
 
@@ -658,8 +659,8 @@ public class ProjectService {
         task.getContactId() == null ? null : String.valueOf(task.getContactId()),
         task.getContactName(),
         task.getStatus(),
-        task.getIssuedAt() == null ? null : task.getIssuedAt().toString(),
-        task.getCompletedAt() == null ? null : task.getCompletedAt().toString(),
+        DateTimeFormatters.formatDateTime(task.getIssuedAt()),
+        DateTimeFormatters.formatDateTime(task.getCompletedAt()),
         0,
         0,
         0,
@@ -679,8 +680,8 @@ public class ProjectService {
         workOrder.getHandlerName(),
         workOrder.getWorkOrderTitle(),
         workOrder.getWorkOrderDescription(),
-        workOrder.getIssuedAt() == null ? null : workOrder.getIssuedAt().toString(),
-        workOrder.getCompletedAt() == null ? null : workOrder.getCompletedAt().toString(),
+        DateTimeFormatters.formatDateTime(workOrder.getIssuedAt()),
+        DateTimeFormatters.formatDateTime(workOrder.getCompletedAt()),
         workOrder.getOmsStatus(),
         workOrder.getOmsStatusName(),
         workOrder.getOmsResultSummary(),
@@ -688,11 +689,11 @@ public class ProjectService {
         workOrder.getOmsLogPayload(),
         workOrder.getOmsAttachmentPayload(),
         workOrder.getSyncStatus(),
-        workOrder.getLastSyncedAt() == null ? null : workOrder.getLastSyncedAt().toString(),
+        DateTimeFormatters.formatDateTime(workOrder.getLastSyncedAt()),
         workOrder.getSyncError(),
         workOrder.getIrisReviewStatus(),
         workOrder.getIrisReviewOpinion(),
-        workOrder.getIrisReviewedAt() == null ? null : workOrder.getIrisReviewedAt().toString(),
+        DateTimeFormatters.formatDateTime(workOrder.getIrisReviewedAt()),
         workOrder.getIrisReviewedBy() == null ? null : String.valueOf(workOrder.getIrisReviewedBy()),
         workOrder.getRectificationId() == null ? null : String.valueOf(workOrder.getRectificationId()),
         Objects.equals(workOrder.getReviewLocked(), 1),

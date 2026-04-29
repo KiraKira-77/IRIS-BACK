@@ -11,6 +11,7 @@ import com.iris.back.business.standard.model.request.StandardUpgradeRequest;
 import com.iris.back.business.standard.model.request.StandardUpsertRequest;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.common.model.PageResponse;
+import com.iris.back.common.util.DateTimeFormatters;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.model.dto.FileAttachmentDto;
@@ -548,8 +549,8 @@ public class StandardService {
         entity.getStatus(),
         attachments,
         entity.getDescription(),
-        entity.getCreatedAt() == null ? null : entity.getCreatedAt().toString(),
-        entity.getUpdatedAt() == null ? null : entity.getUpdatedAt().toString(),
+        DateTimeFormatters.formatDateTime(entity.getCreatedAt()),
+        DateTimeFormatters.formatDateTime(entity.getUpdatedAt()),
         entity.getVersionNumber(),
         null,
         entity.getPreviousVersionId() == null ? null : String.valueOf(entity.getPreviousVersionId()),

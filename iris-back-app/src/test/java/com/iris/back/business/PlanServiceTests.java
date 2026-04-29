@@ -145,6 +145,76 @@ class PlanServiceTests {
   }
 
   @Test
+  void derivesParentPlanStatusFromChildPlans() {
+    mockCurrentUser();
+    BizPlanEntity parent = plan("9001", "PL-2026-001", "2026 annual control plan", "approved");
+    BizPlanEntity notStartedChild = childPlan("9002", "PL-2026-001-01", "Finance sub plan", "approved", "9001");
+    BizPlanEntity inProgressChild = childPlan("9003", "PL-2026-001-02", "IT sub plan", "approved", "9001");
+    BizPlanItemEntity linkedItem = item("9101", "9003");
+    linkedItem.setProjectId("9201");
+    when(planMapper.selectList(any())).thenReturn(List.of(parent, notStartedChild, inProgressChild));
+    when(planItemMapper.selectList(any())).thenReturn(List.of(linkedItem));
+    lenient().when(projectMapper.selectList(any())).thenReturn(List.of(project("9201", "in_progress", "none")));
+
+    var page = planService.list(new PlanListQuery(null, 2026, null, 1L, 10L));
+
+    assertThat(page.getRecords())
+        .filteredOn(item -> item.id().equals("9001"))
+        .singleElement()
+        .satisfies(item -> assertThat(item.status()).isEqualTo("in_progress"));
+  }
+
+  @Test
+  void derivesParentPlanAsCompletedWhenAllChildrenAreTerminalButNotAllArchived() {
+    mockCurrentUser();
+    BizPlanEntity parent = plan("9001", "PL-2026-001", "2026 annual control plan", "approved");
+    BizPlanEntity completedChild = childPlan("9002", "PL-2026-001-01", "Finance sub plan", "approved", "9001");
+    BizPlanEntity archivedChild = childPlan("9003", "PL-2026-001-02", "IT sub plan", "approved", "9001");
+    BizPlanItemEntity completedItem = item("9101", "9002");
+    completedItem.setProjectId("9201");
+    BizPlanItemEntity archivedItem = item("9102", "9003");
+    archivedItem.setProjectId("9202");
+    when(planMapper.selectList(any())).thenReturn(List.of(parent, completedChild, archivedChild));
+    when(planItemMapper.selectList(any())).thenReturn(List.of(completedItem, archivedItem));
+    lenient().when(projectMapper.selectList(any())).thenReturn(List.of(
+        project("9201", "completed", "none"),
+        project("9202", "completed", "completed")
+    ));
+
+    var page = planService.list(new PlanListQuery(null, 2026, null, 1L, 10L));
+
+    assertThat(page.getRecords())
+        .filteredOn(item -> item.id().equals("9001"))
+        .singleElement()
+        .satisfies(item -> assertThat(item.status()).isEqualTo("completed"));
+  }
+
+  @Test
+  void derivesParentPlanAsArchivedWhenAllChildrenAreArchived() {
+    mockCurrentUser();
+    BizPlanEntity parent = plan("9001", "PL-2026-001", "2026 annual control plan", "approved");
+    BizPlanEntity firstChild = childPlan("9002", "PL-2026-001-01", "Finance sub plan", "approved", "9001");
+    BizPlanEntity secondChild = childPlan("9003", "PL-2026-001-02", "IT sub plan", "approved", "9001");
+    BizPlanItemEntity firstItem = item("9101", "9002");
+    firstItem.setProjectId("9201");
+    BizPlanItemEntity secondItem = item("9102", "9003");
+    secondItem.setProjectId("9202");
+    when(planMapper.selectList(any())).thenReturn(List.of(parent, firstChild, secondChild));
+    when(planItemMapper.selectList(any())).thenReturn(List.of(firstItem, secondItem));
+    lenient().when(projectMapper.selectList(any())).thenReturn(List.of(
+        project("9201", "completed", "completed"),
+        project("9202", "archived", "completed")
+    ));
+
+    var page = planService.list(new PlanListQuery(null, 2026, null, 1L, 10L));
+
+    assertThat(page.getRecords())
+        .filteredOn(item -> item.id().equals("9001"))
+        .singleElement()
+        .satisfies(item -> assertThat(item.status()).isEqualTo("archived"));
+  }
+
+  @Test
   void formatsPlanTimestampsWithoutIsoSeparator() {
     mockCurrentUser();
     BizPlanEntity plan = plan("9001", "PL-2026-001", "2026 annual control plan", "approved");
@@ -261,6 +331,12 @@ class PlanServiceTests {
     entity.setSharedScopeIds("9002");
     entity.setCreatedBy(2001L);
     entity.setUpdatedBy(2001L);
+    return entity;
+  }
+
+  private BizPlanEntity childPlan(String id, String code, String name, String status, String parentId) {
+    BizPlanEntity entity = plan(id, code, name, status);
+    entity.setParentId(Long.valueOf(parentId));
     return entity;
   }
 

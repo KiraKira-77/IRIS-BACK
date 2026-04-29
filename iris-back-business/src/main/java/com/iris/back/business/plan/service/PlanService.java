@@ -69,8 +69,13 @@ public class PlanService {
         principal.tenantId(),
         itemsByPlanId.values().stream().flatMap(List::stream).toList()
     );
+    Map<Long, String> statusByPlanId = deriveStatuses(entities, itemsByPlanId, projectById);
     List<PlanDto> filtered = entities.stream()
-        .map(entity -> toDto(entity, itemsByPlanId.getOrDefault(entity.getId(), List.of()), projectById))
+        .map(entity -> toDto(
+            entity,
+            itemsByPlanId.getOrDefault(entity.getId(), List.of()),
+            statusByPlanId.getOrDefault(entity.getId(), normalizeStatus(entity.getStatus(), null))
+        ))
         .filter(item -> matches(item, safeQuery))
         .toList();
 
@@ -84,8 +89,7 @@ public class PlanService {
   public PlanDto get(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizPlanEntity entity = requirePlan(parseId(id, "PLAN_ID_INVALID"), principal.tenantId());
-    List<BizPlanItemEntity> items = listItems(principal.tenantId(), entity.getId());
-    return toDto(entity, items, loadProjects(principal.tenantId(), items));
+    return toDto(entity, buildPlanStatusContext(principal.tenantId(), entity));
   }
 
   @Transactional
@@ -101,7 +105,7 @@ public class PlanService {
     entity.setUpdatedBy(principal.userId());
     planMapper.insert(entity);
     List<BizPlanItemEntity> items = replaceItems(entity.getId(), principal, request.items());
-    return toDto(entity, items, loadProjects(principal.tenantId(), items));
+    return toDto(entity, items, deriveLeafStatus(entity, items, loadProjects(principal.tenantId(), items)));
   }
 
   @Transactional
@@ -112,7 +116,7 @@ public class PlanService {
     entity.setUpdatedBy(principal.userId());
     planMapper.updateById(entity);
     List<BizPlanItemEntity> items = replaceItems(entity.getId(), principal, request.items());
-    return toDto(entity, items, loadProjects(principal.tenantId(), items));
+    return toDto(entity, buildPlanStatusContext(principal.tenantId(), entity));
   }
 
   @Transactional
@@ -151,8 +155,7 @@ public class PlanService {
       entity.setApprovedBy(principal.userId());
     }
     planMapper.updateById(entity);
-    List<BizPlanItemEntity> items = listItems(principal.tenantId(), entity.getId());
-    return toDto(entity, items, loadProjects(principal.tenantId(), items));
+    return toDto(entity, buildPlanStatusContext(principal.tenantId(), entity));
   }
 
   private void applyFields(BizPlanEntity entity, PlanUpsertRequest request, boolean create) {
@@ -253,14 +256,6 @@ public class PlanService {
         .collect(Collectors.toMap(BizProjectEntity::getId, Function.identity(), (left, right) -> left));
   }
 
-  private List<BizPlanItemEntity> listItems(Long tenantId, Long planId) {
-    return planItemMapper.selectList(new LambdaQueryWrapper<BizPlanItemEntity>()
-        .eq(BizPlanItemEntity::getTenantId, tenantId)
-        .eq(BizPlanItemEntity::getPlanId, planId)
-        .orderByAsc(BizPlanItemEntity::getSequenceNo)
-        .orderByAsc(BizPlanItemEntity::getId));
-  }
-
   private boolean matches(PlanDto item, PlanListQuery query) {
     String keyword = trimToNull(query.keyword());
     String status = trimToNull(query.status());
@@ -282,8 +277,19 @@ public class PlanService {
 
   private PlanDto toDto(
       BizPlanEntity entity,
+      PlanStatusContext statusContext
+  ) {
+    return toDto(
+        entity,
+        statusContext.itemsByPlanId().getOrDefault(entity.getId(), List.of()),
+        statusContext.statusByPlanId().getOrDefault(entity.getId(), normalizeStatus(entity.getStatus(), null))
+    );
+  }
+
+  private PlanDto toDto(
+      BizPlanEntity entity,
       List<BizPlanItemEntity> items,
-      Map<Long, BizProjectEntity> projectById
+      String status
   ) {
     List<BizPlanItemEntity> sortedItems = items.stream()
         .sorted(Comparator.comparing(BizPlanItemEntity::getSequenceNo, Comparator.nullsLast(Integer::compareTo))
@@ -296,7 +302,7 @@ public class PlanService {
         entity.getCycle(),
         entity.getPlanYear(),
         entity.getPeriod(),
-        deriveStatus(entity, sortedItems, projectById),
+        status,
         entity.getDescription(),
         entity.getOwnerScopeId() == null ? null : String.valueOf(entity.getOwnerScopeId()),
         splitCsv(entity.getSharedScopeIds()).stream()
@@ -312,7 +318,64 @@ public class PlanService {
     );
   }
 
+  private PlanStatusContext buildPlanStatusContext(Long tenantId, BizPlanEntity currentPlan) {
+    List<BizPlanEntity> plans = nullToList(planMapper.selectList(new LambdaQueryWrapper<BizPlanEntity>()
+        .eq(BizPlanEntity::getTenantId, tenantId)));
+    if (plans.stream().noneMatch(plan -> Objects.equals(plan.getId(), currentPlan.getId()))) {
+      plans = java.util.stream.Stream.concat(plans.stream(), java.util.stream.Stream.of(currentPlan)).toList();
+    }
+    Map<Long, List<BizPlanItemEntity>> itemsByPlanId = loadItems(tenantId, plans);
+    Map<Long, BizProjectEntity> projectById = loadProjects(
+        tenantId,
+        itemsByPlanId.values().stream().flatMap(List::stream).toList()
+    );
+    return new PlanStatusContext(itemsByPlanId, deriveStatuses(plans, itemsByPlanId, projectById));
+  }
+
+  private Map<Long, String> deriveStatuses(
+      List<BizPlanEntity> plans,
+      Map<Long, List<BizPlanItemEntity>> itemsByPlanId,
+      Map<Long, BizProjectEntity> projectById
+  ) {
+    Map<Long, List<BizPlanEntity>> childrenByParentId = plans.stream()
+        .filter(plan -> plan.getParentId() != null)
+        .collect(Collectors.groupingBy(BizPlanEntity::getParentId));
+    Map<Long, String> statusByPlanId = new java.util.HashMap<>();
+    for (BizPlanEntity plan : plans) {
+      deriveStatus(plan, itemsByPlanId, projectById, childrenByParentId, statusByPlanId);
+    }
+    return statusByPlanId;
+  }
+
   private String deriveStatus(
+      BizPlanEntity entity,
+      Map<Long, List<BizPlanItemEntity>> itemsByPlanId,
+      Map<Long, BizProjectEntity> projectById,
+      Map<Long, List<BizPlanEntity>> childrenByParentId,
+      Map<Long, String> statusByPlanId
+  ) {
+    String existing = statusByPlanId.get(entity.getId());
+    if (existing != null) {
+      return existing;
+    }
+    if ("draft".equalsIgnoreCase(trimToNull(entity.getStatus()))) {
+      statusByPlanId.put(entity.getId(), "draft");
+      return "draft";
+    }
+    List<BizPlanEntity> children = childrenByParentId.getOrDefault(entity.getId(), List.of());
+    if (!children.isEmpty()) {
+      String status = deriveParentStatus(children.stream()
+          .map(child -> deriveStatus(child, itemsByPlanId, projectById, childrenByParentId, statusByPlanId))
+          .toList());
+      statusByPlanId.put(entity.getId(), status);
+      return status;
+    }
+    String status = deriveLeafStatus(entity, itemsByPlanId.getOrDefault(entity.getId(), List.of()), projectById);
+    statusByPlanId.put(entity.getId(), status);
+    return status;
+  }
+
+  private String deriveLeafStatus(
       BizPlanEntity entity,
       List<BizPlanItemEntity> items,
       Map<Long, BizProjectEntity> projectById
@@ -335,6 +398,23 @@ public class PlanService {
         .map(projectById::get)
         .allMatch(project -> project != null && isCompletedProject(project));
     if (allKnownProjectsCompleted) {
+      return "completed";
+    }
+    return "in_progress";
+  }
+
+  private String deriveParentStatus(List<String> childStatuses) {
+    List<String> effectiveStatuses = childStatuses.stream()
+        .map(status -> "draft".equalsIgnoreCase(status) ? "approved" : status)
+        .toList();
+    if (effectiveStatuses.stream().allMatch(status -> "archived".equalsIgnoreCase(status))) {
+      return "archived";
+    }
+    if (effectiveStatuses.stream().allMatch(status -> "approved".equalsIgnoreCase(status))) {
+      return "approved";
+    }
+    if (effectiveStatuses.stream()
+        .allMatch(status -> "completed".equalsIgnoreCase(status) || "archived".equalsIgnoreCase(status))) {
       return "completed";
     }
     return "in_progress";
@@ -464,5 +544,15 @@ public class PlanService {
         .map(String::trim)
         .filter(item -> !item.isBlank())
         .toList();
+  }
+
+  private <T> List<T> nullToList(List<T> values) {
+    return values == null ? List.of() : values;
+  }
+
+  private record PlanStatusContext(
+      Map<Long, List<BizPlanItemEntity>> itemsByPlanId,
+      Map<Long, String> statusByPlanId
+  ) {
   }
 }

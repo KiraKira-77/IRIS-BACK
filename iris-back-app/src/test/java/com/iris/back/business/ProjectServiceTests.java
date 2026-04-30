@@ -811,11 +811,27 @@ class ProjectServiceTests {
 
     projectService.deleteWorkOrder("7001", "7201", "8001");
 
-    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
-        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
-    verify(projectTaskWorkOrderMapper).updateById(workOrderCaptor.capture());
-    assertThat(workOrderCaptor.getValue().getDeleted()).isEqualTo(1);
-    assertThat(workOrderCaptor.getValue().getUpdatedBy()).isEqualTo(2001L);
+    verify(projectTaskWorkOrderMapper).delete(any());
+    verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
+  }
+
+  @Test
+  void refreshWorkOrderRejectsDeletedWorkOrder() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    workOrder.setDeleted(1);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    Assertions.assertThatThrownBy(() -> projectService.refreshWorkOrder("7001", "7201", "8001"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("project work order not found");
+
+    verify(omsClient, never()).getWorkOrder(any());
   }
 
   private BizChecklistEntity checklist() {

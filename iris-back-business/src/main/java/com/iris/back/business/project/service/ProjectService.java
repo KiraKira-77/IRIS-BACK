@@ -369,9 +369,11 @@ public class ProjectService {
         parsedTaskId,
         principal.tenantId()
     );
-    workOrder.setDeleted(1);
-    workOrder.setUpdatedBy(principal.userId());
-    projectTaskWorkOrderMapper.updateById(workOrder);
+    projectTaskWorkOrderMapper.delete(new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
+        .eq(BizProjectTaskWorkOrderEntity::getTenantId, principal.tenantId())
+        .eq(BizProjectTaskWorkOrderEntity::getProjectId, parsedProjectId)
+        .eq(BizProjectTaskWorkOrderEntity::getTaskId, parsedTaskId)
+        .eq(BizProjectTaskWorkOrderEntity::getId, workOrder.getId()));
   }
 
   @Transactional
@@ -613,6 +615,7 @@ public class ProjectService {
   ) {
     BizProjectTaskWorkOrderEntity workOrder = projectTaskWorkOrderMapper.selectById(workOrderId);
     if (workOrder == null
+        || Objects.equals(workOrder.getDeleted(), 1)
         || !Objects.equals(workOrder.getTenantId(), tenantId)
         || !Objects.equals(workOrder.getProjectId(), projectId)
         || !Objects.equals(workOrder.getTaskId(), taskId)) {

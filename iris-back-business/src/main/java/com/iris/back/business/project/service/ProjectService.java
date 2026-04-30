@@ -278,13 +278,15 @@ public class ProjectService {
               handler.handlerEmployeeNo(),
               "PROJECT_WORK_ORDER_HANDLER_EMPLOYEE_NO_REQUIRED"
           );
+          Long localWorkOrderId = nextId(new BizProjectTaskWorkOrderEntity());
           return new OmsClient.OmsCreateCommand(
               handler.handlerId(),
               handlerEmployeeNo,
               handler.handlerName(),
               trimToNull(request.title()) == null ? task.getTaskName() : request.title().trim(),
               trimToNull(request.description()) == null ? task.getTaskDescription() : request.description().trim(),
-              task.getId() + ":" + handlerEmployeeNo
+              task.getId() + ":" + handlerEmployeeNo + ":" + localWorkOrderId,
+              localWorkOrderId
           );
         })
         .toList();
@@ -702,13 +704,10 @@ public class ProjectService {
   ) {
     OmsClient.OmsCreateResult result = resultByHandlerId.get(command.handlerId());
     BizProjectTaskWorkOrderEntity workOrder = existingByKey.get(command.idempotencyKey());
-    if (workOrder == null) {
-      workOrder = existingByKey.get(task.getId() + ":" + command.handlerId());
-    }
     boolean create = workOrder == null;
     if (create) {
       workOrder = new BizProjectTaskWorkOrderEntity();
-      workOrder.setId(nextId(workOrder));
+      workOrder.setId(command.localWorkOrderId());
       workOrder.setTenantId(principal.tenantId());
       workOrder.setProjectId(project.getId());
       workOrder.setTaskId(task.getId());

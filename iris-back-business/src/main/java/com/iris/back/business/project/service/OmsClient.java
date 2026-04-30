@@ -19,7 +19,8 @@ public interface OmsClient {
       String handlerName,
       String title,
       String description,
-      String idempotencyKey
+      String idempotencyKey,
+      Long localWorkOrderId
   ) {
   }
 

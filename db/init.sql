@@ -436,7 +436,7 @@ CREATE TABLE IF NOT EXISTS biz_project_task_work_order (
   updated_by BIGINT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_biz_project_wo_idempotency (tenant_id, idempotency_key),
-  UNIQUE KEY uk_biz_project_wo_handler (tenant_id, task_id, handler_employee_no),
+  KEY idx_biz_project_wo_handler (tenant_id, task_id, handler_employee_no),
   KEY idx_biz_project_wo_task (tenant_id, task_id),
   KEY idx_biz_project_wo_project (tenant_id, project_id),
   KEY idx_biz_project_wo_oms (tenant_id, oms_work_order_id),

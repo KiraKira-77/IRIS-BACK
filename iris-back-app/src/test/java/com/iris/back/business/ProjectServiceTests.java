@@ -599,7 +599,7 @@ class ProjectServiceTests {
     assertThat(commandCaptor.getValue()).singleElement().satisfies(command -> {
       assertThat(command.handlerId()).isEqualTo("201");
       assertThat(command.handlerEmployeeNo()).isEqualTo("EMP001");
-      assertThat(command.idempotencyKey()).isEqualTo("7201:EMP001");
+      assertThat(command.idempotencyKey()).isEqualTo("7201:EMP001:8001");
     });
 
     ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
@@ -607,7 +607,7 @@ class ProjectServiceTests {
     verify(projectTaskWorkOrderMapper).insert(workOrderCaptor.capture());
     assertThat(workOrderCaptor.getValue().getHandlerId()).isEqualTo(201L);
     assertThat(workOrderCaptor.getValue().getHandlerEmployeeNo()).isEqualTo("EMP001");
-    assertThat(workOrderCaptor.getValue().getIdempotencyKey()).isEqualTo("7201:EMP001");
+    assertThat(workOrderCaptor.getValue().getIdempotencyKey()).isEqualTo("7201:EMP001:8001");
   }
 
   @Test
@@ -688,7 +688,7 @@ class ProjectServiceTests {
     assertThat(workOrders).hasSize(2);
     assertThat(workOrderCaptor.getAllValues())
         .extracting(BizProjectTaskWorkOrderEntity::getIdempotencyKey)
-        .containsExactly("7201:EMP001", "7201:EMP002");
+        .containsExactly("7201:EMP001:8001", "7201:EMP002:8002");
     assertThat(workOrderCaptor.getAllValues())
         .extracting(BizProjectTaskWorkOrderEntity::getOmsWorkOrderId)
         .containsExactly("OMS-20260427-0001", "OMS-20260427-0002");
@@ -696,6 +696,41 @@ class ProjectServiceTests {
         .extracting("reviewable")
         .containsExactly(false, false);
     assertThat(task.getStatus()).isEqualTo("in_progress");
+  }
+
+  @Test
+  void createWorkOrdersAllowsAdditionalOrdersForSameHandler() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    task.setAssigneeName("Platform Administrator");
+    BizProjectTaskWorkOrderEntity existing = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    existing.setIdempotencyKey("7201:EMP001:OLD");
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(existing));
+    when(identifierGenerator.nextId(any()))
+        .thenReturn(9001L)
+        .thenReturn(9002L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("201", "OMS-20260427-0002", "created", null, "{}")
+    ));
+
+    var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
+        "Finance recheck",
+        "Create another OMS work order",
+        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
+    ));
+
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectTaskWorkOrderMapper).insert(workOrderCaptor.capture());
+    verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    assertThat(workOrders).singleElement().satisfies(item -> {
+      assertThat(item.omsWorkOrderId()).isEqualTo("OMS-20260427-0002");
+      assertThat(item.idempotencyKey()).isEqualTo("7201:EMP001:9001");
+    });
+    assertThat(workOrderCaptor.getValue().getIdempotencyKey()).isEqualTo("7201:EMP001:9001");
   }
 
   @Test

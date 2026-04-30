@@ -24,6 +24,7 @@ import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskWorkOrderEntity;
 import com.iris.back.business.project.model.request.ProjectListQuery;
+import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
 import com.iris.back.common.exception.BusinessException;
@@ -209,6 +210,41 @@ public class ProjectService {
   }
 
   @Transactional
+  public ProjectDto assignTasks(String projectId, ProjectTaskAssignRequest request) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    ensureLeader(project, principal);
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    BizProjectMemberEntity assignee = requireAssignableTaskMember(
+        members,
+        parseId(normalizeRequiredText(request.assigneeId(), "PROJECT_TASK_ASSIGNEE_ID_REQUIRED"),
+            "PROJECT_TASK_ASSIGNEE_ID_INVALID")
+    );
+    List<Long> taskIds = parseIds(request.taskIds(), "PROJECT_TASK_ID_INVALID");
+    Long contactId = parseNullableId(request.contactId(), "PROJECT_TASK_CONTACT_ID_INVALID");
+    String contactName = trimToNull(request.contactName());
+    String assigneeName = normalizeRequiredText(request.assigneeName(), "PROJECT_TASK_ASSIGNEE_NAME_REQUIRED");
+    List<BizProjectTaskEntity> assignedTasks = taskIds.stream()
+        .map(taskId -> {
+          BizProjectTaskEntity task = requireTask(taskId, parsedProjectId, principal.tenantId());
+          task.setAssigneeId(assignee.getPersonnelId());
+          task.setAssigneeName(assigneeName);
+          task.setContactId(contactId);
+          task.setContactName(contactName);
+          if (task.getIssuedAt() == null) {
+            task.setIssuedAt(LocalDateTime.now());
+          }
+          task.setUpdatedBy(principal.userId());
+          projectTaskMapper.updateById(task);
+          return task;
+        })
+        .toList();
+    List<BizProjectTaskEntity> tasks = listTasks(principal.tenantId(), project.getId());
+    return toDto(project, members, tasks.isEmpty() ? assignedTasks : tasks);
+  }
+
+  @Transactional
   public List<ProjectTaskWorkOrderDto> createWorkOrders(
       String projectId,
       String taskId,
@@ -219,7 +255,7 @@ public class ProjectService {
     Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
-    ensureTaskAssignee(task, principal);
+    ensureTaskWorkOrderAccess(project, task, principal);
 
     List<ProjectWorkOrderCreateRequest.HandlerRequest> handlers = request.handlers();
     List<OmsClient.OmsCreateCommand> commands = handlers.stream()
@@ -360,7 +396,7 @@ public class ProjectService {
           member.setPersonnelName(normalizeRequiredText(request.personnelName(), "PROJECT_MEMBER_NAME_REQUIRED"));
           member.setEmployeeNo(trimToNull(request.employeeNo()));
           member.setDepartment(trimToNull(request.department()));
-          member.setRole(normalizeRequiredText(request.role(), "PROJECT_MEMBER_ROLE_REQUIRED"));
+          member.setRole(normalizeProjectMemberRole(request.role()));
           member.setDeleted(0);
           member.setVersion(0L);
           member.setCreatedBy(principal.userId());
@@ -548,12 +584,6 @@ public class ProjectService {
     }
   }
 
-  private void ensureTaskAssignee(BizProjectTaskEntity task, CurrentUserPrincipal principal) {
-    if (!Objects.equals(task.getAssigneeId(), principal.userId())) {
-      throw new BusinessException("PROJECT_TASK_ASSIGNEE_REQUIRED", "PROJECT_TASK_ASSIGNEE_REQUIRED");
-    }
-  }
-
   private void ensureTaskWorkOrderAccess(
       BizProjectEntity project,
       BizProjectTaskEntity task,
@@ -563,6 +593,28 @@ public class ProjectService {
         && !Objects.equals(task.getAssigneeId(), principal.userId())) {
       throw new BusinessException("PROJECT_TASK_ASSIGNEE_REQUIRED", "PROJECT_TASK_ASSIGNEE_REQUIRED");
     }
+  }
+
+  private BizProjectMemberEntity requireAssignableTaskMember(
+      List<BizProjectMemberEntity> members,
+      Long assigneeId
+  ) {
+    return members.stream()
+        .filter(member -> Objects.equals(member.getPersonnelId(), assigneeId))
+        .filter(member -> "leader".equals(member.getRole()) || "auditor".equals(member.getRole()))
+        .findFirst()
+        .orElseThrow(() -> new BusinessException(
+            "PROJECT_TASK_ASSIGNEE_ROLE_INVALID",
+            "PROJECT_TASK_ASSIGNEE_ROLE_INVALID"
+        ));
+  }
+
+  private String normalizeProjectMemberRole(String role) {
+    String normalized = normalizeRequiredText(role, "PROJECT_MEMBER_ROLE_REQUIRED");
+    if (!Set.of("leader", "auditor", "observer").contains(normalized)) {
+      throw new BusinessException("PROJECT_MEMBER_ROLE_INVALID", "PROJECT_MEMBER_ROLE_INVALID");
+    }
+    return normalized;
   }
 
   private BizProjectTaskWorkOrderEntity saveWorkOrder(

@@ -25,6 +25,7 @@ import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskWorkOrderEntity;
 import com.iris.back.business.project.model.request.ProjectListQuery;
+import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
 import com.iris.back.business.project.service.OmsClient;
@@ -207,6 +208,41 @@ class ProjectServiceTests {
   }
 
   @Test
+  void createRejectsLegacyProjectMemberRoles() {
+    mockCurrentUser();
+    when(identifierGenerator.nextId(any())).thenReturn(7001L);
+    when(checklistMapper.selectList(any())).thenReturn(List.of(checklist()));
+    when(checklistItemMapper.selectList(any())).thenReturn(List.of(
+        checklistItem(9901L, "Bank reconciliation", "Complete by the 5th day")
+    ));
+
+    Assertions.assertThatThrownBy(() -> projectService.create(new ProjectUpsertRequest(
+        "PRJ-2026-001",
+        "2026 Finance Control Project",
+        "manual",
+        null,
+        null,
+        "Finance controls",
+        "2026-04-27",
+        null,
+        List.of(),
+        List.of(),
+        "2001",
+        "Platform Administrator",
+        List.of("8801"),
+        List.of(new ProjectUpsertRequest.ProjectMemberRequest(
+            "2001",
+            "Platform Administrator",
+            "E2001",
+            "Finance",
+            "member"
+        ))
+    )))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_MEMBER_ROLE_INVALID");
+  }
+
+  @Test
   void listReturnsOnlyProjectsWhereCurrentUserIsMember() {
     mockCurrentUser();
     when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(7001L, 2001L, "leader")));
@@ -351,6 +387,85 @@ class ProjectServiceTests {
     Assertions.assertThatThrownBy(() -> projectService.delete("7001"))
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("PROJECT_LEADER_REQUIRED");
+  }
+
+  @Test
+  void assignTasksRejectsObserverMembers() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(
+        member(7001L, 2001L, "leader"),
+        member(7001L, 3001L, "observer")
+    ));
+
+    Assertions.assertThatThrownBy(() -> projectService.assignTasks("7001", new ProjectTaskAssignRequest(
+        List.of("7201"),
+        "3001",
+        "Observer",
+        null,
+        null
+    )))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_TASK_ASSIGNEE_ROLE_INVALID");
+    verify(projectTaskMapper, never()).updateById(any(BizProjectTaskEntity.class));
+  }
+
+  @Test
+  void assignTasksAllowsLeadersAndAuditors() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "pending");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(
+        member(7001L, 2001L, "leader"),
+        member(7001L, 3001L, "auditor")
+    ));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskMapper.selectList(any())).thenReturn(List.of(task));
+
+    ProjectDto result = projectService.assignTasks("7001", new ProjectTaskAssignRequest(
+        List.of("7201"),
+        "3001",
+        "Auditor",
+        "4001",
+        "Contact"
+    ));
+
+    ArgumentCaptor<BizProjectTaskEntity> taskCaptor = ArgumentCaptor.forClass(BizProjectTaskEntity.class);
+    verify(projectTaskMapper).updateById(taskCaptor.capture());
+    assertThat(taskCaptor.getValue().getAssigneeId()).isEqualTo(3001L);
+    assertThat(taskCaptor.getValue().getAssigneeName()).isEqualTo("Auditor");
+    assertThat(taskCaptor.getValue().getContactId()).isEqualTo(4001L);
+    assertThat(taskCaptor.getValue().getContactName()).isEqualTo("Contact");
+    assertThat(result.tasks()).singleElement().satisfies(assignedTask -> {
+      assertThat(assignedTask.assigneeId()).isEqualTo("3001");
+      assertThat(assignedTask.assigneeName()).isEqualTo("Auditor");
+    });
+  }
+
+  @Test
+  void projectLeaderCanCreateWorkOrdersForAssignedInspectionItems() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "pending");
+    task.setAssigneeId(3001L);
+    task.setAssigneeName("Auditor");
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
+    when(identifierGenerator.nextId(any())).thenReturn(8001L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("201", "OMS-20260427-0001", "created", null, "{}")
+    ));
+
+    var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
+        "Finance check",
+        "Please complete the check in OMS",
+        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "Handler A"))
+    ));
+
+    assertThat(workOrders).hasSize(1);
+    verify(projectTaskWorkOrderMapper).insert(any(BizProjectTaskWorkOrderEntity.class));
   }
 
   @Test

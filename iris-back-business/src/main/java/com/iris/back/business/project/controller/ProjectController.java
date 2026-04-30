@@ -3,6 +3,7 @@ package com.iris.back.business.project.controller;
 import com.iris.back.business.project.model.dto.ProjectDto;
 import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
 import com.iris.back.business.project.model.request.ProjectListQuery;
+import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
 import com.iris.back.business.project.service.ProjectService;
@@ -70,6 +71,14 @@ public class ProjectController {
   @PostMapping("/{id}/complete")
   public ApiResponse<ProjectDto> complete(@PathVariable String id) {
     return ApiResponse.success("project completed", projectService.complete(id));
+  }
+
+  @PostMapping("/{projectId}/tasks/assign")
+  public ApiResponse<ProjectDto> assignTasks(
+      @PathVariable String projectId,
+      @Valid @RequestBody ProjectTaskAssignRequest request
+  ) {
+    return ApiResponse.success("project inspection items assigned", projectService.assignTasks(projectId, request));
   }
 
   @PostMapping("/{projectId}/tasks/{taskId}/work-orders")

@@ -7,6 +7,7 @@ public record ProjectTaskWorkOrderDto(
     String omsWorkOrderId,
     String idempotencyKey,
     String handlerId,
+    String handlerEmployeeNo,
     String handlerName,
     String workOrderTitle,
     String workOrderDescription,

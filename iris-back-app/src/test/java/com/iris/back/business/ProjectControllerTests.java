@@ -238,13 +238,14 @@ class ProjectControllerTests {
                 {
                   "title": "Finance check",
                   "description": "Handle in OMS",
-                  "handlers": [{"handlerId": "201", "handlerName": "Handler A"}]
+                  "handlers": [{"handlerId": "201", "handlerEmployeeNo": "EMP001", "handlerName": "Handler A"}]
                 }
                 """))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].id").value("8001"))
         .andExpect(jsonPath("$.data[0].omsWorkOrderId").value("OMS-20260427-0001"))
-        .andExpect(jsonPath("$.data[0].idempotencyKey").value("7201:201"));
+        .andExpect(jsonPath("$.data[0].idempotencyKey").value("7201:EMP001"))
+        .andExpect(jsonPath("$.data[0].handlerEmployeeNo").value("EMP001"));
   }
 
   @Test
@@ -314,8 +315,9 @@ class ProjectControllerTests {
         "7001",
         "7201",
         "OMS-20260427-0001",
-        "7201:201",
+        "7201:EMP001",
         "201",
+        "EMP001",
         "Handler A",
         "Finance check",
         "Handle in OMS",
@@ -346,8 +348,9 @@ class ProjectControllerTests {
         "7001",
         "7201",
         "OMS-20260427-0001",
-        "7201:201",
+        "7201:EMP001",
         "201",
+        "EMP001",
         "Handler A",
         "Finance check",
         "Handle in OMS",

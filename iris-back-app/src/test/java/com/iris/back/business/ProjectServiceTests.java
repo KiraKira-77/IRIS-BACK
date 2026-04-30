@@ -537,7 +537,7 @@ class ProjectServiceTests {
     var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
         "Finance check",
         "Please complete the check in OMS",
-        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "Handler A"))
+        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
     ));
 
     assertThat(workOrders).hasSize(1);
@@ -565,12 +565,72 @@ class ProjectServiceTests {
     var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
         "Finance check",
         "Please complete the check in OMS",
-        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "Handler A"))
+        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
     ));
 
     assertThat(workOrders).hasSize(1);
     verify(projectTaskMapper).updateById(task);
     verify(projectTaskWorkOrderMapper).insert(any(BizProjectTaskWorkOrderEntity.class));
+  }
+
+  @Test
+  void createWorkOrdersUsesEmployeeNoForOmsAssigneeAndIdempotency() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "pending");
+    task.setAssigneeId(2001L);
+    task.setAssigneeName("Platform Administrator");
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
+    when(identifierGenerator.nextId(any())).thenReturn(8001L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("201", "OMS-20260427-0001", "created", null, "{}")
+    ));
+
+    projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
+        "Finance check",
+        "Please complete the check in OMS",
+        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
+    ));
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<List<OmsClient.OmsCreateCommand>> commandCaptor = ArgumentCaptor.forClass(List.class);
+    verify(omsClient).createWorkOrders(any(), commandCaptor.capture());
+    assertThat(commandCaptor.getValue()).singleElement().satisfies(command -> {
+      assertThat(command.handlerId()).isEqualTo("201");
+      assertThat(command.handlerEmployeeNo()).isEqualTo("EMP001");
+      assertThat(command.idempotencyKey()).isEqualTo("7201:EMP001");
+    });
+
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectTaskWorkOrderMapper).insert(workOrderCaptor.capture());
+    assertThat(workOrderCaptor.getValue().getHandlerId()).isEqualTo(201L);
+    assertThat(workOrderCaptor.getValue().getHandlerEmployeeNo()).isEqualTo("EMP001");
+    assertThat(workOrderCaptor.getValue().getIdempotencyKey()).isEqualTo("7201:EMP001");
+  }
+
+  @Test
+  void createWorkOrdersRejectsHandlerWithoutEmployeeNo() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "pending");
+    task.setAssigneeId(2001L);
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+
+    Assertions.assertThatThrownBy(() -> projectService.createWorkOrders(
+        "7001",
+        "7201",
+        new ProjectWorkOrderCreateRequest(
+            "Finance check",
+            "Please complete the check in OMS",
+            List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", " ", "Handler A"))
+        )
+    ))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_WORK_ORDER_HANDLER_EMPLOYEE_NO_REQUIRED");
+    verify(omsClient, never()).createWorkOrders(any(), any());
+    verify(projectTaskWorkOrderMapper, never()).insert(any(BizProjectTaskWorkOrderEntity.class));
   }
 
   @Test
@@ -587,7 +647,7 @@ class ProjectServiceTests {
         new ProjectWorkOrderCreateRequest(
             "Finance check",
             "Please complete the check in OMS",
-            List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "Handler A"))
+            List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
         )
     ))
         .isInstanceOf(BusinessException.class)
@@ -616,8 +676,8 @@ class ProjectServiceTests {
         "Finance check",
         "Please complete the check in OMS",
         List.of(
-            new ProjectWorkOrderCreateRequest.HandlerRequest("201", "Handler A"),
-            new ProjectWorkOrderCreateRequest.HandlerRequest("202", "Handler B")
+            new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"),
+            new ProjectWorkOrderCreateRequest.HandlerRequest("202", "EMP002", "Handler B")
         )
     ));
 
@@ -628,7 +688,7 @@ class ProjectServiceTests {
     assertThat(workOrders).hasSize(2);
     assertThat(workOrderCaptor.getAllValues())
         .extracting(BizProjectTaskWorkOrderEntity::getIdempotencyKey)
-        .containsExactly("7201:201", "7201:202");
+        .containsExactly("7201:EMP001", "7201:EMP002");
     assertThat(workOrderCaptor.getAllValues())
         .extracting(BizProjectTaskWorkOrderEntity::getOmsWorkOrderId)
         .containsExactly("OMS-20260427-0001", "OMS-20260427-0002");
@@ -750,8 +810,9 @@ class ProjectServiceTests {
     entity.setProjectId(projectId);
     entity.setTaskId(taskId);
     entity.setOmsWorkOrderId(omsWorkOrderId);
-    entity.setIdempotencyKey(taskId + ":201");
+    entity.setIdempotencyKey(taskId + ":EMP001");
     entity.setHandlerId(201L);
+    entity.setHandlerEmployeeNo("EMP001");
     entity.setHandlerName("Handler A");
     entity.setWorkOrderTitle("Finance check");
     entity.setWorkOrderDescription("Handle in OMS");

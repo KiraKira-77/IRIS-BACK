@@ -12,6 +12,7 @@ public class BizProjectTaskWorkOrderEntity extends BaseEntity {
   private String omsWorkOrderId;
   private String idempotencyKey;
   private Long handlerId;
+  private String handlerEmployeeNo;
   private String handlerName;
   private String workOrderTitle;
   private String workOrderDescription;
@@ -79,6 +80,14 @@ public class BizProjectTaskWorkOrderEntity extends BaseEntity {
 
   public void setHandlerId(Long handlerId) {
     this.handlerId = handlerId;
+  }
+
+  public String getHandlerEmployeeNo() {
+    return handlerEmployeeNo;
+  }
+
+  public void setHandlerEmployeeNo(String handlerEmployeeNo) {
+    this.handlerEmployeeNo = handlerEmployeeNo;
   }
 
   public String getHandlerName() {

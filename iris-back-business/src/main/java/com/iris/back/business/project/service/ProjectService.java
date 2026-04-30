@@ -273,13 +273,20 @@ public class ProjectService {
 
     List<ProjectWorkOrderCreateRequest.HandlerRequest> handlers = request.handlers();
     List<OmsClient.OmsCreateCommand> commands = handlers.stream()
-        .map(handler -> new OmsClient.OmsCreateCommand(
-            handler.handlerId(),
-            handler.handlerName(),
-            trimToNull(request.title()) == null ? task.getTaskName() : request.title().trim(),
-            trimToNull(request.description()) == null ? task.getTaskDescription() : request.description().trim(),
-            task.getId() + ":" + handler.handlerId()
-        ))
+        .map(handler -> {
+          String handlerEmployeeNo = normalizeRequiredText(
+              handler.handlerEmployeeNo(),
+              "PROJECT_WORK_ORDER_HANDLER_EMPLOYEE_NO_REQUIRED"
+          );
+          return new OmsClient.OmsCreateCommand(
+              handler.handlerId(),
+              handlerEmployeeNo,
+              handler.handlerName(),
+              trimToNull(request.title()) == null ? task.getTaskName() : request.title().trim(),
+              trimToNull(request.description()) == null ? task.getTaskDescription() : request.description().trim(),
+              task.getId() + ":" + handlerEmployeeNo
+          );
+        })
         .toList();
     Map<String, OmsClient.OmsCreateResult> resultByHandlerId = omsClient.createWorkOrders(toTaskDto(task), commands)
         .stream()
@@ -682,6 +689,9 @@ public class ProjectService {
   ) {
     OmsClient.OmsCreateResult result = resultByHandlerId.get(command.handlerId());
     BizProjectTaskWorkOrderEntity workOrder = existingByKey.get(command.idempotencyKey());
+    if (workOrder == null) {
+      workOrder = existingByKey.get(task.getId() + ":" + command.handlerId());
+    }
     boolean create = workOrder == null;
     if (create) {
       workOrder = new BizProjectTaskWorkOrderEntity();
@@ -689,13 +699,14 @@ public class ProjectService {
       workOrder.setTenantId(principal.tenantId());
       workOrder.setProjectId(project.getId());
       workOrder.setTaskId(task.getId());
-      workOrder.setIdempotencyKey(command.idempotencyKey());
-      workOrder.setHandlerId(parseId(command.handlerId(), "PROJECT_WORK_ORDER_HANDLER_ID_INVALID"));
-      workOrder.setHandlerName(command.handlerName());
       workOrder.setDeleted(0);
       workOrder.setVersion(0L);
       workOrder.setCreatedBy(principal.userId());
     }
+    workOrder.setIdempotencyKey(command.idempotencyKey());
+    workOrder.setHandlerId(parseId(command.handlerId(), "PROJECT_WORK_ORDER_HANDLER_ID_INVALID"));
+    workOrder.setHandlerEmployeeNo(command.handlerEmployeeNo());
+    workOrder.setHandlerName(command.handlerName());
     workOrder.setWorkOrderTitle(command.title());
     workOrder.setWorkOrderDescription(command.description());
     workOrder.setRequestPayload(command.toString());
@@ -804,6 +815,7 @@ public class ProjectService {
         workOrder.getOmsWorkOrderId(),
         workOrder.getIdempotencyKey(),
         workOrder.getHandlerId() == null ? null : String.valueOf(workOrder.getHandlerId()),
+        workOrder.getHandlerEmployeeNo(),
         workOrder.getHandlerName(),
         workOrder.getWorkOrderTitle(),
         workOrder.getWorkOrderDescription(),

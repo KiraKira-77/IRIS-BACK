@@ -13,6 +13,7 @@ public record ProjectWorkOrderCreateRequest(
 
   public record HandlerRequest(
       @NotBlank String handlerId,
+      @NotBlank String handlerEmployeeNo,
       @NotBlank String handlerName
   ) {
   }

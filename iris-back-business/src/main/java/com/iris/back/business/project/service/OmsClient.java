@@ -15,6 +15,7 @@ public interface OmsClient {
 
   record OmsCreateCommand(
       String handlerId,
+      String handlerEmployeeNo,
       String handlerName,
       String title,
       String description,

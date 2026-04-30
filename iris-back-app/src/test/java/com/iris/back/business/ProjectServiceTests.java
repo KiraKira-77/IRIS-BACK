@@ -574,6 +574,30 @@ class ProjectServiceTests {
   }
 
   @Test
+  void listTaskWorkOrdersUsesProjectMemberEmployeeNoForHandlerDisplay() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    workOrder.setHandlerId(201L);
+    workOrder.setHandlerEmployeeNo("201");
+    BizProjectMemberEntity handlerMember = member(7001L, 201L, "auditor");
+    handlerMember.setEmployeeNo("EMP001");
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(handlerMember));
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
+
+    var workOrders = projectService.listTaskWorkOrders("7001", "7201");
+
+    assertThat(workOrders).singleElement().satisfies(item -> {
+      assertThat(item.handlerId()).isEqualTo("201");
+      assertThat(item.handlerEmployeeNo()).isEqualTo("EMP001");
+      assertThat(item.handlerName()).isEqualTo("Handler A");
+    });
+  }
+
+  @Test
   void createWorkOrdersUsesEmployeeNoForOmsAssigneeAndIdempotency() {
     mockCurrentUser();
     BizProjectTaskEntity task = task(7201L, 7001L, "pending");

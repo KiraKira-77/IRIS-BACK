@@ -211,7 +211,9 @@ public class ProjectService {
     Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
-    ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    ensureTaskWorkOrderAccess(project, task, principal, members);
+    Map<Long, String> employeeNoByPersonnelId = employeeNoByPersonnelId(members);
     return nullToList(projectTaskWorkOrderMapper.selectList(
         new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
             .eq(BizProjectTaskWorkOrderEntity::getTenantId, principal.tenantId())
@@ -219,7 +221,7 @@ public class ProjectService {
             .eq(BizProjectTaskWorkOrderEntity::getTaskId, task.getId())
             .orderByDesc(BizProjectTaskWorkOrderEntity::getUpdatedAt)
             .orderByDesc(BizProjectTaskWorkOrderEntity::getId)
-    )).stream().map(this::toWorkOrderDto).toList();
+    )).stream().map(workOrder -> toWorkOrderDto(workOrder, employeeNoByPersonnelId)).toList();
   }
 
   @Transactional
@@ -322,7 +324,8 @@ public class ProjectService {
     Long parsedWorkOrderId = parseId(workOrderId, "PROJECT_WORK_ORDER_ID_INVALID");
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
-    ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    ensureTaskWorkOrderAccess(project, task, principal, members);
     BizProjectTaskWorkOrderEntity workOrder = requireWorkOrder(
         parsedWorkOrderId,
         parsedProjectId,
@@ -348,7 +351,7 @@ public class ProjectService {
       workOrder.setCompletedAt(LocalDateTime.now());
     }
     projectTaskWorkOrderMapper.updateById(workOrder);
-    return toWorkOrderDto(workOrder);
+    return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
   }
 
   @Transactional
@@ -827,6 +830,13 @@ public class ProjectService {
   }
 
   private ProjectTaskWorkOrderDto toWorkOrderDto(BizProjectTaskWorkOrderEntity workOrder) {
+    return toWorkOrderDto(workOrder, Map.of());
+  }
+
+  private ProjectTaskWorkOrderDto toWorkOrderDto(
+      BizProjectTaskWorkOrderEntity workOrder,
+      Map<Long, String> employeeNoByPersonnelId
+  ) {
     return new ProjectTaskWorkOrderDto(
         String.valueOf(workOrder.getId()),
         String.valueOf(workOrder.getProjectId()),
@@ -834,7 +844,7 @@ public class ProjectService {
         workOrder.getOmsWorkOrderId(),
         workOrder.getIdempotencyKey(),
         workOrder.getHandlerId() == null ? null : String.valueOf(workOrder.getHandlerId()),
-        workOrder.getHandlerEmployeeNo(),
+        handlerEmployeeNo(workOrder, employeeNoByPersonnelId),
         workOrder.getHandlerName(),
         workOrder.getWorkOrderTitle(),
         workOrder.getWorkOrderDescription(),
@@ -857,6 +867,29 @@ public class ProjectService {
         Objects.equals(workOrder.getReviewLocked(), 1),
         isOmsReviewable(workOrder.getOmsStatus())
     );
+  }
+
+  private Map<Long, String> employeeNoByPersonnelId(List<BizProjectMemberEntity> members) {
+    return nullToList(members).stream()
+        .filter(member -> member.getPersonnelId() != null && trimToNull(member.getEmployeeNo()) != null)
+        .collect(Collectors.toMap(
+            BizProjectMemberEntity::getPersonnelId,
+            member -> member.getEmployeeNo().trim(),
+            (left, right) -> left
+        ));
+  }
+
+  private String handlerEmployeeNo(
+      BizProjectTaskWorkOrderEntity workOrder,
+      Map<Long, String> employeeNoByPersonnelId
+  ) {
+    if (workOrder.getHandlerId() != null) {
+      String employeeNo = employeeNoByPersonnelId.get(workOrder.getHandlerId());
+      if (employeeNo != null) {
+        return employeeNo;
+      }
+    }
+    return workOrder.getHandlerEmployeeNo();
   }
 
   private boolean isOmsReviewable(String omsStatus) {

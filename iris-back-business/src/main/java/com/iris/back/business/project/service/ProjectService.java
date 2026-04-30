@@ -201,9 +201,7 @@ public class ProjectService {
     projectTaskMapper.delete(new LambdaQueryWrapper<BizProjectTaskEntity>()
         .eq(BizProjectTaskEntity::getTenantId, principal.tenantId())
         .eq(BizProjectTaskEntity::getProjectId, project.getId()));
-    projectMemberMapper.delete(new LambdaQueryWrapper<BizProjectMemberEntity>()
-        .eq(BizProjectMemberEntity::getTenantId, principal.tenantId())
-        .eq(BizProjectMemberEntity::getProjectId, project.getId()));
+    projectMemberMapper.hardDeleteByProject(principal.tenantId(), project.getId());
     projectMapper.deleteById(project.getId());
   }
 
@@ -377,9 +375,7 @@ public class ProjectService {
       CurrentUserPrincipal principal,
       List<ProjectUpsertRequest.ProjectMemberRequest> requests
   ) {
-    projectMemberMapper.delete(new LambdaQueryWrapper<BizProjectMemberEntity>()
-        .eq(BizProjectMemberEntity::getTenantId, principal.tenantId())
-        .eq(BizProjectMemberEntity::getProjectId, projectId));
+    projectMemberMapper.hardDeleteByProject(principal.tenantId(), projectId);
     return createMembers(projectId, principal, requests);
   }
 

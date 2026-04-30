@@ -379,7 +379,8 @@ class ProjectServiceTests {
 
     ArgumentCaptor<BizProjectEntity> projectCaptor = ArgumentCaptor.forClass(BizProjectEntity.class);
     verify(projectMapper).updateById(projectCaptor.capture());
-    verify(projectMemberMapper).delete(any());
+    verify(projectMemberMapper).hardDeleteByProject(1001L, 7001L);
+    verify(projectMemberMapper, never()).delete(any());
     verify(projectMemberMapper).insert(any(BizProjectMemberEntity.class));
     assertThat(updated.name()).isEqualTo("Updated finance project");
     assertThat(updated.status()).isEqualTo("completed");
@@ -417,6 +418,7 @@ class ProjectServiceTests {
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("PROJECT_ARCHIVED_EDIT_FORBIDDEN");
     verify(projectMapper, never()).updateById(any(BizProjectEntity.class));
+    verify(projectMemberMapper, never()).hardDeleteByProject(any(), any());
     verify(projectMemberMapper, never()).delete(any());
   }
 

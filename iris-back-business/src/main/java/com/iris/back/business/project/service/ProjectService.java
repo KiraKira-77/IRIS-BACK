@@ -211,7 +211,7 @@ public class ProjectService {
     Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
-    ensureTaskWorkOrderAccess(project, task, principal);
+    ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
     return nullToList(projectTaskWorkOrderMapper.selectList(
         new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
             .eq(BizProjectTaskWorkOrderEntity::getTenantId, principal.tenantId())
@@ -269,7 +269,7 @@ public class ProjectService {
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
     ensureProjectInProgress(project);
-    ensureTaskWorkOrderAccess(project, task, principal);
+    ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
 
     List<ProjectWorkOrderCreateRequest.HandlerRequest> handlers = request.handlers();
     List<OmsClient.OmsCreateCommand> commands = handlers.stream()
@@ -313,7 +313,7 @@ public class ProjectService {
     Long parsedWorkOrderId = parseId(workOrderId, "PROJECT_WORK_ORDER_ID_INVALID");
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
-    ensureTaskWorkOrderAccess(project, task, principal);
+    ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
     BizProjectTaskWorkOrderEntity workOrder = requireWorkOrder(
         parsedWorkOrderId,
         parsedProjectId,
@@ -616,12 +616,38 @@ public class ProjectService {
   private void ensureTaskWorkOrderAccess(
       BizProjectEntity project,
       BizProjectTaskEntity task,
-      CurrentUserPrincipal principal
+      CurrentUserPrincipal principal,
+      List<BizProjectMemberEntity> members
   ) {
-    if (!Objects.equals(project.getLeaderId(), principal.userId())
-        && !Objects.equals(task.getAssigneeId(), principal.userId())) {
+    if (!canOperateTaskWorkOrder(project, task, principal, members)) {
       throw new BusinessException("PROJECT_TASK_ASSIGNEE_REQUIRED", "PROJECT_TASK_ASSIGNEE_REQUIRED");
     }
+  }
+
+  private boolean canOperateTaskWorkOrder(
+      BizProjectEntity project,
+      BizProjectTaskEntity task,
+      CurrentUserPrincipal principal,
+      List<BizProjectMemberEntity> members
+  ) {
+    if (Objects.equals(project.getLeaderId(), principal.userId())
+        || Objects.equals(task.getAssigneeId(), principal.userId())) {
+      return true;
+    }
+    return nullToList(members).stream()
+        .filter(member -> isCurrentPrincipalMember(member, principal))
+        .anyMatch(member -> "leader".equals(member.getRole()) || isTaskAssigneeMember(task, member));
+  }
+
+  private boolean isCurrentPrincipalMember(BizProjectMemberEntity member, CurrentUserPrincipal principal) {
+    return Objects.equals(member.getPersonnelId(), principal.userId())
+        || textEquals(member.getEmployeeNo(), principal.account())
+        || textEquals(member.getPersonnelName(), principal.username());
+  }
+
+  private boolean isTaskAssigneeMember(BizProjectTaskEntity task, BizProjectMemberEntity member) {
+    return Objects.equals(task.getAssigneeId(), member.getPersonnelId())
+        || textEquals(task.getAssigneeName(), member.getPersonnelName());
   }
 
   private BizProjectMemberEntity requireAssignableTaskMember(
@@ -888,6 +914,12 @@ public class ProjectService {
 
   private String trimToNull(String value) {
     return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private boolean textEquals(String left, String right) {
+    String normalizedLeft = trimToNull(left);
+    String normalizedRight = trimToNull(right);
+    return normalizedLeft != null && normalizedLeft.equals(normalizedRight);
   }
 
   private String joinCsv(List<String> values) {

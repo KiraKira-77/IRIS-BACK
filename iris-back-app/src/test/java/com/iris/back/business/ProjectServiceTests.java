@@ -545,6 +545,35 @@ class ProjectServiceTests {
   }
 
   @Test
+  void createWorkOrdersAllowsAssigneeMatchedByProjectMemberAccount() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "pending");
+    task.setAssigneeId(3001L);
+    task.setAssigneeName("Platform Administrator");
+    BizProjectMemberEntity member = member(7001L, 3001L, "auditor");
+    member.setEmployeeNo("admin");
+    member.setPersonnelName("Platform Administrator");
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member));
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
+    when(identifierGenerator.nextId(any())).thenReturn(8001L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("201", "OMS-20260427-0001", "created", null, "{}")
+    ));
+
+    var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
+        "Finance check",
+        "Please complete the check in OMS",
+        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "Handler A"))
+    ));
+
+    assertThat(workOrders).hasSize(1);
+    verify(projectTaskMapper).updateById(task);
+    verify(projectTaskWorkOrderMapper).insert(any(BizProjectTaskWorkOrderEntity.class));
+  }
+
+  @Test
   void createWorkOrdersRejectsNotStartedProjects() {
     mockCurrentUser();
     BizProjectTaskEntity task = task(7201L, 7001L, "pending");

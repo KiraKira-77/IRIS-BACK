@@ -6,6 +6,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
@@ -19,11 +20,13 @@ import com.iris.back.business.plan.model.request.PlanUpsertRequest;
 import com.iris.back.business.plan.service.PlanService;
 import com.iris.back.business.project.mapper.BizProjectMapper;
 import com.iris.back.business.project.model.entity.BizProjectEntity;
+import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -314,6 +317,40 @@ class PlanServiceTests {
     PlanDto approved = planService.approve("9001");
     assertThat(approved.status()).isEqualTo("approved");
     assertThat(existing.getApprovedBy()).isEqualTo(2001L);
+  }
+
+  @Test
+  void deleteRejectsParentPlanWhenChildPlanHasLinkedProject() {
+    mockCurrentUser();
+    BizPlanEntity parent = plan("9001", "PL-2026-001", "2026 annual control plan", "approved");
+    BizPlanEntity child = childPlan("9002", "PL-2026-001-01", "Finance sub plan", "approved", "9001");
+    BizPlanItemEntity linkedChildItem = item("9101", "9002");
+    linkedChildItem.setProjectId("9201");
+    when(planMapper.selectById(9001L)).thenReturn(parent);
+    when(planMapper.selectList(any())).thenReturn(List.of(parent, child));
+    when(planItemMapper.selectList(any())).thenReturn(List.of(linkedChildItem));
+
+    Assertions.assertThatThrownBy(() -> planService.delete("9001"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PLAN_LINKED_PROJECT_DELETE_FORBIDDEN");
+    verify(planItemMapper, never()).delete(any());
+    verify(planMapper, never()).deleteById(any());
+  }
+
+  @Test
+  void deleteAllowsParentPlanWhenNoDescendantHasLinkedProject() {
+    mockCurrentUser();
+    BizPlanEntity parent = plan("9001", "PL-2026-001", "2026 annual control plan", "approved");
+    BizPlanEntity child = childPlan("9002", "PL-2026-001-01", "Finance sub plan", "approved", "9001");
+    when(planMapper.selectById(9001L)).thenReturn(parent);
+    when(planMapper.selectList(any())).thenReturn(List.of(parent, child));
+    when(planItemMapper.selectList(any())).thenReturn(List.of(item("9101", "9002")));
+
+    planService.delete("9001");
+
+    verify(planItemMapper).delete(any());
+    verify(planMapper).deleteById(9001L);
+    verify(planMapper).deleteById(9002L);
   }
 
   private BizPlanEntity plan(String id, String code, String name, String status) {

@@ -123,13 +123,18 @@ public class PlanService {
   public void delete(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizPlanEntity entity = requirePlan(parseId(id, "PLAN_ID_INVALID"), principal.tenantId());
-    List<Long> planIds = planMapper.selectList(new LambdaQueryWrapper<BizPlanEntity>()
-            .eq(BizPlanEntity::getTenantId, principal.tenantId())
-            .eq(BizPlanEntity::getParentId, entity.getId()))
-        .stream()
-        .map(BizPlanEntity::getId)
-        .collect(Collectors.toCollection(java.util.ArrayList::new));
-    planIds.add(entity.getId());
+    List<BizPlanEntity> plans = nullToList(planMapper.selectList(new LambdaQueryWrapper<BizPlanEntity>()
+        .eq(BizPlanEntity::getTenantId, principal.tenantId())));
+    if (plans.stream().noneMatch(plan -> Objects.equals(plan.getId(), entity.getId()))) {
+      plans = java.util.stream.Stream.concat(plans.stream(), java.util.stream.Stream.of(entity)).toList();
+    }
+    Set<Long> planIds = collectPlanSubtreeIds(entity.getId(), plans);
+    List<BizPlanItemEntity> items = nullToList(planItemMapper.selectList(new LambdaQueryWrapper<BizPlanItemEntity>()
+        .eq(BizPlanItemEntity::getTenantId, principal.tenantId())
+        .in(BizPlanItemEntity::getPlanId, planIds)));
+    if (items.stream().anyMatch(item -> trimToNull(item.getProjectId()) != null)) {
+      throw new BusinessException("PLAN_LINKED_PROJECT_DELETE_FORBIDDEN", "PLAN_LINKED_PROJECT_DELETE_FORBIDDEN");
+    }
     planItemMapper.delete(new LambdaQueryWrapper<BizPlanItemEntity>()
         .eq(BizPlanItemEntity::getTenantId, principal.tenantId())
         .in(BizPlanItemEntity::getPlanId, planIds));
@@ -330,6 +335,25 @@ public class PlanService {
         itemsByPlanId.values().stream().flatMap(List::stream).toList()
     );
     return new PlanStatusContext(itemsByPlanId, deriveStatuses(plans, itemsByPlanId, projectById));
+  }
+
+  private Set<Long> collectPlanSubtreeIds(Long rootPlanId, List<BizPlanEntity> plans) {
+    Map<Long, List<BizPlanEntity>> childrenByParentId = plans.stream()
+        .filter(plan -> plan.getParentId() != null)
+        .collect(Collectors.groupingBy(BizPlanEntity::getParentId));
+    Set<Long> planIds = new java.util.LinkedHashSet<>();
+    java.util.ArrayDeque<Long> pendingIds = new java.util.ArrayDeque<>();
+    pendingIds.add(rootPlanId);
+    while (!pendingIds.isEmpty()) {
+      Long currentId = pendingIds.removeFirst();
+      if (!planIds.add(currentId)) {
+        continue;
+      }
+      childrenByParentId.getOrDefault(currentId, List.of()).stream()
+          .map(BizPlanEntity::getId)
+          .forEach(pendingIds::addLast);
+    }
+    return planIds;
   }
 
   private Map<Long, String> deriveStatuses(

@@ -255,6 +255,7 @@ public class ProjectService {
     Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    ensureProjectInProgress(project);
     ensureTaskWorkOrderAccess(project, task, principal);
 
     List<ProjectWorkOrderCreateRequest.HandlerRequest> handlers = request.handlers();
@@ -581,6 +582,12 @@ public class ProjectService {
   private void ensureLeader(BizProjectEntity project, CurrentUserPrincipal principal) {
     if (!Objects.equals(project.getLeaderId(), principal.userId())) {
       throw new BusinessException("PROJECT_LEADER_REQUIRED", "PROJECT_LEADER_REQUIRED");
+    }
+  }
+
+  private void ensureProjectInProgress(BizProjectEntity project) {
+    if (!"in_progress".equals(project.getStatus())) {
+      throw new BusinessException("PROJECT_NOT_STARTED", "PROJECT_NOT_STARTED");
     }
   }
 

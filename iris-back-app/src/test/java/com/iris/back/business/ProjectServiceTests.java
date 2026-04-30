@@ -469,6 +469,28 @@ class ProjectServiceTests {
   }
 
   @Test
+  void createWorkOrdersRejectsNotStartedProjects() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "pending");
+    task.setAssigneeId(2001L);
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "not_started"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+
+    Assertions.assertThatThrownBy(() -> projectService.createWorkOrders(
+        "7001",
+        "7201",
+        new ProjectWorkOrderCreateRequest(
+            "Finance check",
+            "Please complete the check in OMS",
+            List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "Handler A"))
+        )
+    ))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_NOT_STARTED");
+    verify(projectTaskWorkOrderMapper, never()).insert(any(BizProjectTaskWorkOrderEntity.class));
+  }
+
+  @Test
   void createWorkOrdersCreatesOneChildRowPerHandlerWithoutDuplicatingTasks() {
     mockCurrentUser();
     BizProjectTaskEntity task = task(7201L, 7001L, "pending");

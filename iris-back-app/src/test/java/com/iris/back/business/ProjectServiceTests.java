@@ -787,7 +787,11 @@ class ProjectServiceTests {
 
     projectService.deleteWorkOrder("7001", "7201", "8001");
 
-    verify(projectTaskWorkOrderMapper).deleteById(8001L);
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectTaskWorkOrderMapper).updateById(workOrderCaptor.capture());
+    assertThat(workOrderCaptor.getValue().getDeleted()).isEqualTo(1);
+    assertThat(workOrderCaptor.getValue().getUpdatedBy()).isEqualTo(2001L);
   }
 
   private BizChecklistEntity checklist() {

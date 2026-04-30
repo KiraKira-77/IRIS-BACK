@@ -360,8 +360,15 @@ public class ProjectService {
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
     ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
-    requireWorkOrder(parsedWorkOrderId, parsedProjectId, parsedTaskId, principal.tenantId());
-    projectTaskWorkOrderMapper.deleteById(parsedWorkOrderId);
+    BizProjectTaskWorkOrderEntity workOrder = requireWorkOrder(
+        parsedWorkOrderId,
+        parsedProjectId,
+        parsedTaskId,
+        principal.tenantId()
+    );
+    workOrder.setDeleted(1);
+    workOrder.setUpdatedBy(principal.userId());
+    projectTaskWorkOrderMapper.updateById(workOrder);
   }
 
   @Transactional

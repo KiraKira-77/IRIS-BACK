@@ -1,7 +1,9 @@
 package com.iris.back.business;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -270,6 +272,15 @@ class ProjectControllerTests {
         .andExpect(jsonPath("$.data.omsStatus").value("20"))
         .andExpect(jsonPath("$.data.syncStatus").value("synced"))
         .andExpect(jsonPath("$.data.reviewable").value(true));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void deleteWorkOrderRouteDeletesTaskWorkOrder() throws Exception {
+    mockMvc.perform(delete("/api/v1/projects/7001/tasks/7201/work-orders/8001"))
+        .andExpect(status().isOk());
+
+    verify(projectService).deleteWorkOrder("7001", "7201", "8001");
   }
 
   private ProjectDto sampleProject() {

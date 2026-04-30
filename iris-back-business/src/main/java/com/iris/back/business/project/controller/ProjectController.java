@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PutMapping;
 
 @RestController
 @RequestMapping("/api/v1/projects")
@@ -61,6 +62,14 @@ public class ProjectController {
   @PostMapping
   public ApiResponse<ProjectDto> create(@Valid @RequestBody ProjectUpsertRequest request) {
     return ApiResponse.success("project created", projectService.create(request));
+  }
+
+  @PutMapping("/{id}")
+  public ApiResponse<ProjectDto> update(
+      @PathVariable String id,
+      @Valid @RequestBody ProjectUpsertRequest request
+  ) {
+    return ApiResponse.success("project updated", projectService.update(id, request));
   }
 
   @PostMapping("/{id}/start")

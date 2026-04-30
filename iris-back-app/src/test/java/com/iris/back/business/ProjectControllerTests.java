@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -198,6 +199,30 @@ class ProjectControllerTests {
 
     mockMvc.perform(post("/api/v1/projects/7001/complete"))
         .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("completed"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void updateRouteReturnsProjectPayload() throws Exception {
+    when(projectService.update(org.mockito.ArgumentMatchers.eq("7001"), any())).thenReturn(sampleProject("completed"));
+
+    mockMvc.perform(put("/api/v1/projects/7001")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "code": "PRJ-2026-001",
+                  "name": "Finance project updated",
+                  "source": "manual",
+                  "startDate": "2026-04-27",
+                  "leaderId": "2001",
+                  "leaderName": "Admin",
+                  "checklistIds": ["8801"],
+                  "members": []
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value("7001"))
         .andExpect(jsonPath("$.data.status").value("completed"));
   }
 

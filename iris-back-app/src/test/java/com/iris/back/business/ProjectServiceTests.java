@@ -347,6 +347,80 @@ class ProjectServiceTests {
   }
 
   @Test
+  void projectLeaderUpdatesProjectInfoUntilArchived() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "completed");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectList(any())).thenReturn(List.of(task(7201L, 7001L, "passed")));
+    when(identifierGenerator.nextId(any())).thenReturn(7101L);
+
+    ProjectDto updated = projectService.update("7001", new ProjectUpsertRequest(
+        "PRJ-2026-001",
+        "Updated finance project",
+        "manual",
+        null,
+        null,
+        "Updated controls",
+        "2026-04-28",
+        "2026-05-01",
+        List.of(),
+        List.of(),
+        "2001",
+        "Platform Administrator",
+        List.of("8801"),
+        List.of(new ProjectUpsertRequest.ProjectMemberRequest(
+            "2001",
+            "Platform Administrator",
+            "E2001",
+            "Finance",
+            "leader"
+        ))
+    ));
+
+    ArgumentCaptor<BizProjectEntity> projectCaptor = ArgumentCaptor.forClass(BizProjectEntity.class);
+    verify(projectMapper).updateById(projectCaptor.capture());
+    verify(projectMemberMapper).delete(any());
+    verify(projectMemberMapper).insert(any(BizProjectMemberEntity.class));
+    assertThat(updated.name()).isEqualTo("Updated finance project");
+    assertThat(updated.status()).isEqualTo("completed");
+    assertThat(projectCaptor.getValue().getProjectName()).isEqualTo("Updated finance project");
+    assertThat(projectCaptor.getValue().getStatus()).isEqualTo("completed");
+  }
+
+  @Test
+  void updateRejectsArchivedProject() {
+    mockCurrentUser();
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "archived"));
+
+    Assertions.assertThatThrownBy(() -> projectService.update("7001", new ProjectUpsertRequest(
+        "PRJ-2026-001",
+        "Updated finance project",
+        "manual",
+        null,
+        null,
+        "Updated controls",
+        "2026-04-28",
+        null,
+        List.of(),
+        List.of(),
+        "2001",
+        "Platform Administrator",
+        List.of("8801"),
+        List.of(new ProjectUpsertRequest.ProjectMemberRequest(
+            "2001",
+            "Platform Administrator",
+            "E2001",
+            "Finance",
+            "leader"
+        ))
+    )))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_ARCHIVED_EDIT_FORBIDDEN");
+    verify(projectMapper, never()).updateById(any(BizProjectEntity.class));
+    verify(projectMemberMapper, never()).delete(any());
+  }
+
+  @Test
   void leaderCompletesProjectWhenEveryTaskIsHandled() {
     mockCurrentUser();
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));

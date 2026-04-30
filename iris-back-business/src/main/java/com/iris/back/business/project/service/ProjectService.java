@@ -176,6 +176,21 @@ public class ProjectService {
   }
 
   @Transactional
+  public ProjectDto update(String id, ProjectUpsertRequest request) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizProjectEntity project = requireProject(parseId(id, "PROJECT_ID_INVALID"), principal.tenantId());
+    ensureLeader(project, principal);
+    if ("archived".equals(project.getStatus())) {
+      throw new BusinessException("PROJECT_ARCHIVED_EDIT_FORBIDDEN", "PROJECT_ARCHIVED_EDIT_FORBIDDEN");
+    }
+    applyFields(project, request, false);
+    project.setUpdatedBy(principal.userId());
+    projectMapper.updateById(project);
+    List<BizProjectMemberEntity> members = replaceMembers(project.getId(), principal, request.members());
+    return toDto(project, members, listTasks(principal.tenantId(), project.getId()));
+  }
+
+  @Transactional
   public void delete(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizProjectEntity project = requireProject(parseId(id, "PROJECT_ID_INVALID"), principal.tenantId());
@@ -355,6 +370,17 @@ public class ProjectService {
     List<BizProjectTaskEntity> tasks = createTasks(project.getId(), principal, checklists, checklistItems);
     linkPlanItemsToProject(project, principal);
     return toDto(project, members, tasks);
+  }
+
+  private List<BizProjectMemberEntity> replaceMembers(
+      Long projectId,
+      CurrentUserPrincipal principal,
+      List<ProjectUpsertRequest.ProjectMemberRequest> requests
+  ) {
+    projectMemberMapper.delete(new LambdaQueryWrapper<BizProjectMemberEntity>()
+        .eq(BizProjectMemberEntity::getTenantId, principal.tenantId())
+        .eq(BizProjectMemberEntity::getProjectId, projectId));
+    return createMembers(projectId, principal, requests);
   }
 
   private void applyFields(BizProjectEntity project, ProjectUpsertRequest request, boolean create) {

@@ -350,6 +350,19 @@ public class ProjectService {
   }
 
   @Transactional
+  public void deleteWorkOrder(String projectId, String taskId, String workOrderId) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
+    Long parsedWorkOrderId = parseId(workOrderId, "PROJECT_WORK_ORDER_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
+    requireWorkOrder(parsedWorkOrderId, parsedProjectId, parsedTaskId, principal.tenantId());
+    projectTaskWorkOrderMapper.deleteById(parsedWorkOrderId);
+  }
+
+  @Transactional
   public ProjectDto create(ProjectUpsertRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     List<Long> checklistIds = parseIds(request.checklistIds(), "PROJECT_CHECKLIST_ID_INVALID");

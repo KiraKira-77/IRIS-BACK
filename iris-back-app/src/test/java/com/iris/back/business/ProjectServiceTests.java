@@ -739,6 +739,22 @@ class ProjectServiceTests {
     assertThat(updated.getOmsAttachmentPayload()).contains("evidence.pdf");
   }
 
+  @Test
+  void deletesProjectTaskWorkOrderForTaskOperator() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    projectService.deleteWorkOrder("7001", "7201", "8001");
+
+    verify(projectTaskWorkOrderMapper).deleteById(8001L);
+  }
+
   private BizChecklistEntity checklist() {
     BizChecklistEntity entity = new BizChecklistEntity();
     entity.setId(8801L);

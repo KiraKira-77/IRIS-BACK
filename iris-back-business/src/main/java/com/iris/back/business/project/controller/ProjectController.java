@@ -122,6 +122,16 @@ public class ProjectController {
     );
   }
 
+  @DeleteMapping("/{projectId}/tasks/{taskId}/work-orders/{workOrderId}")
+  public ApiResponse<Void> deleteWorkOrder(
+      @PathVariable String projectId,
+      @PathVariable String taskId,
+      @PathVariable String workOrderId
+  ) {
+    projectService.deleteWorkOrder(projectId, taskId, workOrderId);
+    return ApiResponse.success("work order deleted", null);
+  }
+
   @DeleteMapping("/{id}")
   public ApiResponse<Void> delete(@PathVariable String id) {
     projectService.delete(id);

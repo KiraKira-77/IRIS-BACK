@@ -31,6 +31,7 @@ import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderRiskAcceptRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderReturnRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderReviewRequest;
 import com.iris.back.business.project.service.OmsClient;
@@ -38,6 +39,7 @@ import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.assertj.core.api.Assertions;
@@ -136,7 +138,82 @@ class ProjectServiceTests {
   }
 
   @Test
-  void reviewCompletedOmsWorkOrderAsRectificationRequiredCreatesRectificationAndMarksTaskNonconforming() {
+  void reviewWorkOrderAcceptsCompletedOmsStatusName() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    workOrder.setOmsStatus(null);
+    workOrder.setOmsStatusName("已完成");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
+
+    ProjectTaskWorkOrderDto reviewed = projectService.reviewWorkOrder(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderReviewRequest("passed", "Evidence accepted")
+    );
+
+    verify(projectTaskWorkOrderMapper).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    assertThat(reviewed.irisReviewStatus()).isEqualTo("passed");
+  }
+
+  @Test
+  void reviewWorkOrderAcceptsArchivedOmsStatusCode() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    workOrder.setOmsStatus("30");
+    workOrder.setOmsStatusName("已归档");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
+
+    ProjectTaskWorkOrderDto reviewed = projectService.reviewWorkOrder(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderReviewRequest("passed", "Archived work order accepted")
+    );
+
+    verify(projectTaskWorkOrderMapper).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    assertThat(reviewed.irisReviewStatus()).isEqualTo("passed");
+  }
+
+  @Test
+  void reviewWorkOrderRejectsTerminatedOmsWorkOrderStatusCode() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    workOrder.setOmsStatus("25");
+    workOrder.setOmsStatusName("已终止");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    Assertions.assertThatThrownBy(() -> projectService.reviewWorkOrder(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderReviewRequest("passed", "Evidence accepted")
+    ))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_WORK_ORDER_NOT_REVIEWABLE");
+
+    verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
+  }
+
+  @Test
+  void reviewCompletedOmsWorkOrderAsRectificationRequiredDoesNotCreateRectificationAndMarksTaskNonconforming() {
     mockCurrentUser();
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
@@ -151,7 +228,6 @@ class ProjectServiceTests {
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
     when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
     when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
-    when(identifierGenerator.nextId(any())).thenReturn(9001L);
 
     ProjectTaskWorkOrderDto reviewed = projectService.reviewWorkOrder(
         "7001",
@@ -160,21 +236,123 @@ class ProjectServiceTests {
         new ProjectWorkOrderReviewRequest("rectification_required", "Missing approval record")
     );
 
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectRectificationMapper, never()).insert(any(BizProjectRectificationEntity.class));
+    verify(projectTaskWorkOrderMapper).updateById(workOrderCaptor.capture());
+    verify(projectTaskMapper).updateById(task);
+    assertThat(reviewed.irisReviewStatus()).isEqualTo("rectification_required");
+    assertThat(reviewed.rectificationId()).isNull();
+    assertThat(reviewed.nonconformityDisposition()).isNull();
+    assertThat(workOrderCaptor.getValue().getRectificationId()).isNull();
+    assertThat(task.getStatus()).isEqualTo("nonconforming");
+  }
+
+  @Test
+  void createRectificationForReviewedNonconformingWorkOrderMarksDisposition() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    task.setAssigneeName("Platform Administrator");
+    BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
+    workOrder.setIrisReviewStatus("rectification_required");
+    workOrder.setIrisReviewOpinion("Missing approval record");
+    workOrder.setReviewLocked(1);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+    when(identifierGenerator.nextId(any())).thenReturn(9001L);
+
+    ProjectTaskWorkOrderDto disposed = projectService.createWorkOrderRectification("7001", "7201", "8001");
+
     ArgumentCaptor<BizProjectRectificationEntity> rectificationCaptor =
         ArgumentCaptor.forClass(BizProjectRectificationEntity.class);
     ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
         ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
     verify(projectRectificationMapper).insert(rectificationCaptor.capture());
     verify(projectTaskWorkOrderMapper).updateById(workOrderCaptor.capture());
-    verify(projectTaskMapper).updateById(task);
-    assertThat(reviewed.irisReviewStatus()).isEqualTo("rectification_required");
-    assertThat(reviewed.rectificationId()).isEqualTo("9001");
-    assertThat(rectificationCaptor.getValue().getId()).isEqualTo(9001L);
+    assertThat(disposed.rectificationId()).isEqualTo("9001");
+    assertThat(disposed.nonconformityDisposition()).isEqualTo("rectification_created");
     assertThat(rectificationCaptor.getValue().getSourceWorkOrderRecordId()).isEqualTo(8001L);
-    assertThat(rectificationCaptor.getValue().getStatus()).isEqualTo("pending");
-    assertThat(rectificationCaptor.getValue().getDescription()).contains("Missing approval record");
     assertThat(workOrderCaptor.getValue().getRectificationId()).isEqualTo(9001L);
-    assertThat(task.getStatus()).isEqualTo("nonconforming");
+    assertThat(workOrderCaptor.getValue().getNonconformityDisposition()).isEqualTo("rectification_created");
+  }
+
+  @Test
+  void acceptRiskForReviewedNonconformingWorkOrderStoresReason() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
+    workOrder.setIrisReviewStatus("rectification_required");
+    workOrder.setReviewLocked(1);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    ProjectTaskWorkOrderDto disposed = projectService.acceptWorkOrderRisk(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderRiskAcceptRequest("Business accepts the risk")
+    );
+
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectRectificationMapper, never()).insert(any(BizProjectRectificationEntity.class));
+    verify(projectTaskWorkOrderMapper).updateById(workOrderCaptor.capture());
+    assertThat(disposed.nonconformityDisposition()).isEqualTo("risk_accepted");
+    assertThat(disposed.riskAcceptanceReason()).isEqualTo("Business accepts the risk");
+    assertThat(workOrderCaptor.getValue().getRiskAcceptanceReason()).isEqualTo("Business accepts the risk");
+    assertThat(workOrderCaptor.getValue().getRiskAcceptedAt()).isNotNull();
+    assertThat(workOrderCaptor.getValue().getRiskAcceptedBy()).isEqualTo(2001L);
+  }
+
+  @Test
+  void returnWorkOrderRejectsReviewedWorkOrder() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
+    workOrder.setIrisReviewStatus("passed");
+    workOrder.setReviewLocked(1);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    Assertions.assertThatThrownBy(() -> projectService.returnWorkOrder(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderReturnRequest("Need more evidence")
+    ))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_WORK_ORDER_REVIEW_LOCKED");
+
+    verify(omsClient, never()).returnWorkOrder(any(), any());
+  }
+
+  @Test
+  void deleteWorkOrderRejectsReviewedWorkOrder() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
+    workOrder.setIrisReviewStatus("passed");
+    workOrder.setReviewLocked(1);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    Assertions.assertThatThrownBy(() -> projectService.deleteWorkOrder("7001", "7201", "8001"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_WORK_ORDER_REVIEW_LOCKED");
+
+    verify(projectTaskWorkOrderMapper, never()).delete(any());
   }
 
   @Test
@@ -196,7 +374,7 @@ class ProjectServiceTests {
         "{\"taskId\":\"OMS-20260427-0001\",\"status\":\"40\"}"
     ));
     when(omsClient.getWorkOrderLogs("OMS-20260427-0001")).thenReturn(List.of(
-        new OmsClient.OmsWorkOrderLogSnapshot("2026-05-06 11:00:00", "IRIS", "back", "Need more evidence")
+        new OmsClient.OmsWorkOrderLogSnapshot("2026-05-06 11:00:00", "IRIS", "back", "Need more evidence", null, null, null)
     ));
     when(omsClient.getWorkOrderAttachments("OMS-20260427-0001")).thenReturn(List.of());
 
@@ -219,6 +397,92 @@ class ProjectServiceTests {
     assertThat(workOrderCaptor.getValue().getIrisReviewStatus()).isEqualTo("returned");
     assertThat(workOrderCaptor.getValue().getReviewLocked()).isZero();
     assertThat(workOrderCaptor.getValue().getOmsLogPayload()).contains("Need more evidence");
+  }
+
+  @Test
+  void returnWorkOrderAcceptsCompletedOmsStatusCode() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    workOrder.setOmsStatus("20");
+    workOrder.setOmsStatusName(null);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+    when(omsClient.getWorkOrder("OMS-20260427-0001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
+        "OMS-20260427-0001",
+        "40",
+        "returned",
+        false,
+        "Returned for more evidence",
+        "{\"taskId\":\"OMS-20260427-0001\",\"status\":\"40\"}"
+    ));
+    when(omsClient.getWorkOrderLogs("OMS-20260427-0001")).thenReturn(List.of());
+    when(omsClient.getWorkOrderAttachments("OMS-20260427-0001")).thenReturn(List.of());
+
+    projectService.returnWorkOrder(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderReturnRequest("Need more evidence")
+    );
+
+    verify(omsClient).returnWorkOrder("OMS-20260427-0001", "Need more evidence");
+    verify(projectTaskWorkOrderMapper).updateById(any(BizProjectTaskWorkOrderEntity.class));
+  }
+
+  @Test
+  void returnWorkOrderRejectsOmsWorkOrderThatIsNotCompleted() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    workOrder.setOmsStatus("10");
+    workOrder.setOmsStatusName("处理中");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    Assertions.assertThatThrownBy(() -> projectService.returnWorkOrder(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderReturnRequest("Need more evidence")
+    ))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_WORK_ORDER_NOT_COMPLETED");
+
+    verify(omsClient, never()).returnWorkOrder(any(), any());
+    verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
+  }
+
+  @Test
+  void returnWorkOrderRejectsTerminatedOmsWorkOrderStatusCode() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    workOrder.setOmsStatus("25");
+    workOrder.setOmsStatusName("已终止");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    Assertions.assertThatThrownBy(() -> projectService.returnWorkOrder(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderReturnRequest("Need more evidence")
+    ))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_WORK_ORDER_NOT_COMPLETED");
+
+    verify(omsClient, never()).returnWorkOrder(any(), any());
+    verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
   }
 
   @Test
@@ -663,11 +927,16 @@ class ProjectServiceTests {
     var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
         "Finance check",
         "Please complete the check in OMS",
+        "2026-05-06",
         List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
     ));
 
     assertThat(workOrders).hasSize(1);
-    verify(projectTaskWorkOrderMapper).insert(any(BizProjectTaskWorkOrderEntity.class));
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectTaskWorkOrderMapper).insert(workOrderCaptor.capture());
+    assertThat(workOrderCaptor.getValue().getIssuedAt()).isEqualTo(LocalDate.of(2026, 5, 6).atStartOfDay());
+    assertThat(workOrders.get(0).issuedAt()).isEqualTo("2026-05-06 00:00:00");
   }
 
   @Test
@@ -676,6 +945,7 @@ class ProjectServiceTests {
     BizProjectTaskEntity task = task(7201L, 7001L, "pending");
     task.setAssigneeId(3001L);
     task.setAssigneeName("Platform Administrator");
+    task.setIssuedAt(LocalDateTime.of(2026, 4, 29, 11, 12, 13));
     BizProjectMemberEntity member = member(7001L, 3001L, "auditor");
     member.setEmployeeNo("admin");
     member.setPersonnelName("Platform Administrator");
@@ -691,12 +961,17 @@ class ProjectServiceTests {
     var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
         "Finance check",
         "Please complete the check in OMS",
+        null,
         List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
     ));
 
     assertThat(workOrders).hasSize(1);
     verify(projectTaskMapper).updateById(task);
-    verify(projectTaskWorkOrderMapper).insert(any(BizProjectTaskWorkOrderEntity.class));
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectTaskWorkOrderMapper).insert(workOrderCaptor.capture());
+    assertThat(workOrderCaptor.getValue().getIssuedAt()).isEqualTo(LocalDateTime.of(2026, 4, 29, 11, 12, 13));
+    assertThat(workOrders.get(0).issuedAt()).isEqualTo("2026-04-29 11:12:13");
   }
 
   @Test
@@ -740,6 +1015,7 @@ class ProjectServiceTests {
     projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
         "Finance check",
         "Please complete the check in OMS",
+        null,
         List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
     ));
 
@@ -774,6 +1050,7 @@ class ProjectServiceTests {
         new ProjectWorkOrderCreateRequest(
             "Finance check",
             "Please complete the check in OMS",
+            null,
             List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", " ", "Handler A"))
         )
     ))
@@ -797,6 +1074,7 @@ class ProjectServiceTests {
         new ProjectWorkOrderCreateRequest(
             "Finance check",
             "Please complete the check in OMS",
+            null,
             List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
         )
     ))
@@ -825,6 +1103,7 @@ class ProjectServiceTests {
     var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
         "Finance check",
         "Please complete the check in OMS",
+        null,
         List.of(
             new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"),
             new ProjectWorkOrderCreateRequest.HandlerRequest("202", "EMP002", "Handler B")
@@ -869,6 +1148,7 @@ class ProjectServiceTests {
     var workOrders = projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
         "Finance recheck",
         "Create another OMS work order",
+        null,
         List.of(new ProjectWorkOrderCreateRequest.HandlerRequest("201", "EMP001", "Handler A"))
     ));
 
@@ -901,7 +1181,7 @@ class ProjectServiceTests {
         "{\"status\":\"20\"}"
     ));
     when(omsClient.getWorkOrderLogs("OMS-20260427-0001")).thenReturn(List.of(
-        new OmsClient.OmsWorkOrderLogSnapshot("2026-04-27T10:00:00", "Handler A", "complete", "submitted")
+        new OmsClient.OmsWorkOrderLogSnapshot("2026-04-27T10:00:00", "Handler A", "complete", "submitted", null, null, null)
     ));
     when(omsClient.getWorkOrderAttachments("OMS-20260427-0001")).thenReturn(List.of(
         new OmsClient.OmsAttachmentSnapshot("file-1", "evidence.pdf", "/mock/evidence.pdf")
@@ -1046,7 +1326,7 @@ class ProjectServiceTests {
     BizProjectTaskWorkOrderEntity entity = workOrder(id, projectId, taskId, "OMS-20260427-0001");
     entity.setSyncStatus("synced");
     entity.setOmsStatus("20");
-    entity.setOmsStatusName("completed");
+    entity.setOmsStatusName("已完成");
     entity.setCompletedAt(LocalDateTime.of(2026, 5, 6, 9, 0));
     return entity;
   }

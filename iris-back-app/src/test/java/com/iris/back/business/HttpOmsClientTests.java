@@ -107,6 +107,21 @@ class HttpOmsClientTests {
   }
 
   @Test
+  void getWorkOrderLogsMapsOmsRecordFields() {
+    List<OmsClient.OmsWorkOrderLogSnapshot> logs = client.getWorkOrderLogs("TASK-OMS-FIELDS");
+
+    assertThat(requests.get(0).path()).isEqualTo("/je/jolywood-it/itsm/internal-control/task/logs");
+    assertThat(logs).hasSize(1);
+    assertThat(logs.get(0).occurredAt()).isEqualTo("2026-05-06 15:11:22");
+    assertThat(logs.get(0).operator()).isEqualTo("张三");
+    assertThat(logs.get(0).action()).isEqualTo("退回");
+    assertThat(logs.get(0).content()).isEqualTo("资料不完整");
+    assertThat(logs.get(0).recordDate()).isEqualTo("2026-05-06");
+    assertThat(logs.get(0).duration()).isEqualTo("2.5");
+    assertThat(logs.get(0).attachmentsPayload()).contains("测试报告20260421.docx");
+  }
+
+  @Test
   void returnWorkOrderCallsInternalControlBackWithReason() throws Exception {
     client.returnWorkOrder("TASK-001", "Need more evidence");
 
@@ -163,7 +178,11 @@ class HttpOmsClientTests {
       case "/je/jolywood-it/itsm/internal-control/task/detail" -> """
           {"success":true,"data":{"taskId":"TASK-001","taskNo":"Ticket20260506001","taskName":"Finance check","taskDescription":"Handle in OMS","status":"20","statusName":"已完成","issuedTime":"2026-05-06","completedTime":"2026-05-08 10:30:00","checkOwnerName":"Handler A","resultSummary":"处理完成"}}
           """;
-      case "/je/jolywood-it/itsm/internal-control/task/logs" -> """
+      case "/je/jolywood-it/itsm/internal-control/task/logs" -> body.contains("TASK-OMS-FIELDS")
+          ? """
+          {"success":true,"data":[{"SY_CREATETIME":"2026-05-06 15:11:22","SY_CREATEUSERNAME":"张三","RECORD_GDCZ":"退回","RECORD_CZXQ":"资料不完整","RECORD_RQ":"2026-05-06","RECORD_GS":"2.5","RECORD_FJ":"[{\\\"bucketName\\\":\\\"oms\\\",\\\"fileName\\\":\\\"itms/ad6bc26ca88e45109197a3f5040a7c90.docx\\\",\\\"minioUrl\\\":\\\"http://10.8.8.81:9001/oms/itms/ad6bc26ca88e45109197a3f5040a7c90.docx\\\",\\\"originalFileName\\\":\\\"测试报告20260421.docx\\\",\\\"id\\\":\\\"vcmDiwQiFDvwaGunYCt\\\"}]"}]}
+          """
+          : """
           {"success":true,"data":[{"occurredAt":"2026-05-08 10:30:00","operator":"Handler A","action":"complete","content":"处理完成"}]}
           """;
       case "/je/jolywood-it/itsm/internal-control/task/back" -> """

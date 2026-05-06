@@ -29,6 +29,7 @@ import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderRiskAcceptRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderReturnRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderReviewRequest;
 import com.iris.back.common.exception.BusinessException;
@@ -281,6 +282,8 @@ public class ProjectService {
     ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
 
     List<ProjectWorkOrderCreateRequest.HandlerRequest> handlers = request.handlers();
+    LocalDate issuedDate = parseNullableDate(request.issuedAt(), "PROJECT_WORK_ORDER_ISSUED_AT_INVALID");
+    LocalDateTime issuedAt = issuedDate == null ? task.getIssuedAt() : issuedDate.atStartOfDay();
     List<OmsClient.OmsCreateCommand> commands = handlers.stream()
         .map(handler -> {
           String handlerEmployeeNo = normalizeRequiredText(
@@ -314,7 +317,7 @@ public class ProjectService {
     ));
 
     List<BizProjectTaskWorkOrderEntity> workOrders = commands.stream()
-        .map(command -> saveWorkOrder(project, task, principal, command, resultByHandlerId, existingByKey))
+        .map(command -> saveWorkOrder(project, task, principal, command, issuedAt, resultByHandlerId, existingByKey))
         .toList();
     if (!"in_progress".equals(task.getStatus())) {
       task.setStatus("in_progress");
@@ -359,11 +362,7 @@ public class ProjectService {
     workOrder.setIrisReviewedBy(principal.userId());
     workOrder.setReviewLocked(1);
     workOrder.setUpdatedBy(principal.userId());
-    if ("rectification_required".equals(reviewStatus)) {
-      BizProjectRectificationEntity rectification = createRectification(project, task, workOrder, principal, request);
-      projectRectificationMapper.insert(rectification);
-      workOrder.setRectificationId(rectification.getId());
-    }
+    // 审核只记录结论；不符合项后续由负责人二选一处置：生成整改单或承担风险。
     projectTaskWorkOrderMapper.updateById(workOrder);
     updateTaskStatusAfterWorkOrderReview(task, principal);
     return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
@@ -392,6 +391,69 @@ public class ProjectService {
   }
 
   @Transactional
+  public ProjectTaskWorkOrderDto createWorkOrderRectification(
+      String projectId,
+      String taskId,
+      String workOrderId
+  ) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
+    Long parsedWorkOrderId = parseId(workOrderId, "PROJECT_WORK_ORDER_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    ensureTaskWorkOrderAccess(project, task, principal, members);
+    BizProjectTaskWorkOrderEntity workOrder = requireWorkOrder(
+        parsedWorkOrderId,
+        parsedProjectId,
+        parsedTaskId,
+        principal.tenantId()
+    );
+    ensureNonconformityPendingDisposition(workOrder);
+
+    BizProjectRectificationEntity rectification = createRectification(project, task, workOrder, principal);
+    projectRectificationMapper.insert(rectification);
+    workOrder.setRectificationId(rectification.getId());
+    workOrder.setNonconformityDisposition("rectification_created");
+    workOrder.setUpdatedBy(principal.userId());
+    projectTaskWorkOrderMapper.updateById(workOrder);
+    return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
+  }
+
+  @Transactional
+  public ProjectTaskWorkOrderDto acceptWorkOrderRisk(
+      String projectId,
+      String taskId,
+      String workOrderId,
+      ProjectWorkOrderRiskAcceptRequest request
+  ) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
+    Long parsedWorkOrderId = parseId(workOrderId, "PROJECT_WORK_ORDER_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    ensureTaskWorkOrderAccess(project, task, principal, members);
+    BizProjectTaskWorkOrderEntity workOrder = requireWorkOrder(
+        parsedWorkOrderId,
+        parsedProjectId,
+        parsedTaskId,
+        principal.tenantId()
+    );
+    ensureNonconformityPendingDisposition(workOrder);
+
+    workOrder.setNonconformityDisposition("risk_accepted");
+    workOrder.setRiskAcceptanceReason(normalizeRequiredText(request.reason(), "PROJECT_WORK_ORDER_RISK_REASON_REQUIRED"));
+    workOrder.setRiskAcceptedAt(LocalDateTime.now());
+    workOrder.setRiskAcceptedBy(principal.userId());
+    workOrder.setUpdatedBy(principal.userId());
+    projectTaskWorkOrderMapper.updateById(workOrder);
+    return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
+  }
+
+  @Transactional
   public ProjectTaskWorkOrderDto returnWorkOrder(
       String projectId,
       String taskId,
@@ -412,8 +474,13 @@ public class ProjectService {
         parsedTaskId,
         principal.tenantId()
     );
+    ensureWorkOrderNotReviewed(workOrder);
     String omsWorkOrderId = normalizeRequiredText(workOrder.getOmsWorkOrderId(), "PROJECT_WORK_ORDER_OMS_ID_REQUIRED");
     String reason = normalizeRequiredText(request.reason(), "PROJECT_WORK_ORDER_RETURN_REASON_REQUIRED");
+    // 退回只允许 OMS 已完成的工单；状态口径以 OMS 返回值为准，内控侧不再做状态码翻译。
+    if (!isOmsCompleted(workOrder)) {
+      throw new BusinessException("PROJECT_WORK_ORDER_NOT_COMPLETED", "PROJECT_WORK_ORDER_NOT_COMPLETED");
+    }
     // 退回动作以 OMS 为准；OMS 调用失败时直接抛错，避免内控侧状态和 OMS 状态不一致。
     omsClient.returnWorkOrder(omsWorkOrderId, reason);
 
@@ -423,6 +490,11 @@ public class ProjectService {
     workOrder.setIrisReviewedAt(LocalDateTime.now());
     workOrder.setIrisReviewedBy(principal.userId());
     workOrder.setReviewLocked(0);
+    workOrder.setRectificationId(null);
+    workOrder.setNonconformityDisposition(null);
+    workOrder.setRiskAcceptanceReason(null);
+    workOrder.setRiskAcceptedAt(null);
+    workOrder.setRiskAcceptedBy(null);
     workOrder.setUpdatedBy(principal.userId());
     // 退回成功后立即同步一次 OMS 详情和日志，让前端看到 OMS 最新状态。
     syncWorkOrderFromOms(workOrder, principal, omsWorkOrderId);
@@ -470,6 +542,7 @@ public class ProjectService {
         parsedTaskId,
         principal.tenantId()
     );
+    ensureWorkOrderNotReviewed(workOrder);
     projectTaskWorkOrderMapper.delete(new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
         .eq(BizProjectTaskWorkOrderEntity::getTenantId, principal.tenantId())
         .eq(BizProjectTaskWorkOrderEntity::getProjectId, parsedProjectId)
@@ -813,6 +886,7 @@ public class ProjectService {
       BizProjectTaskEntity task,
       CurrentUserPrincipal principal,
       OmsClient.OmsCreateCommand command,
+      LocalDateTime issuedAt,
       Map<String, OmsClient.OmsCreateResult> resultByHandlerId,
       Map<String, BizProjectTaskWorkOrderEntity> existingByKey
   ) {
@@ -835,6 +909,8 @@ public class ProjectService {
     workOrder.setHandlerName(command.handlerName());
     workOrder.setWorkOrderTitle(command.title());
     workOrder.setWorkOrderDescription(command.description());
+    // 前端创建 OMS 工单时选择的下达时间要落到本地工单记录，列表和详情都从这里展示。
+    workOrder.setIssuedAt(issuedAt);
     workOrder.setRequestPayload(command.toString());
     workOrder.setResponsePayload(result == null ? null : result.responsePayload());
     workOrder.setOmsWorkOrderId(result == null ? null : result.omsWorkOrderId());
@@ -844,6 +920,10 @@ public class ProjectService {
     workOrder.setOmsStatusName(result == null ? null : result.status());
     workOrder.setIrisReviewStatus("pending");
     workOrder.setReviewLocked(0);
+    workOrder.setNonconformityDisposition(null);
+    workOrder.setRiskAcceptanceReason(null);
+    workOrder.setRiskAcceptedAt(null);
+    workOrder.setRiskAcceptedBy(null);
     workOrder.setUpdatedBy(principal.userId());
     if (create) {
       projectTaskWorkOrderMapper.insert(workOrder);
@@ -857,8 +937,7 @@ public class ProjectService {
       BizProjectEntity project,
       BizProjectTaskEntity task,
       BizProjectTaskWorkOrderEntity workOrder,
-      CurrentUserPrincipal principal,
-      ProjectWorkOrderReviewRequest request
+      CurrentUserPrincipal principal
   ) {
     Long rectificationId = nextId(new BizProjectRectificationEntity());
     BizProjectRectificationEntity rectification = new BizProjectRectificationEntity();
@@ -866,7 +945,7 @@ public class ProjectService {
     rectification.setTenantId(principal.tenantId());
     rectification.setRectificationCode("RECT-" + rectificationId);
     rectification.setTitle(nonBlank(workOrder.getWorkOrderTitle(), task.getTaskName(), "整改项-" + workOrder.getId()));
-    rectification.setDescription(buildRectificationDescription(workOrder, request));
+    rectification.setDescription(buildRectificationDescription(workOrder));
     rectification.setTaskName(task.getTaskName());
     rectification.setTaskDescription(task.getTaskDescription());
     rectification.setProjectId(project.getId());
@@ -890,12 +969,31 @@ public class ProjectService {
   }
 
   private String buildRectificationDescription(
-      BizProjectTaskWorkOrderEntity workOrder,
-      ProjectWorkOrderReviewRequest request
+      BizProjectTaskWorkOrderEntity workOrder
   ) {
-    String opinion = trimToNull(request.opinion());
+    String opinion = trimToNull(workOrder.getIrisReviewOpinion());
     String base = nonBlank(workOrder.getWorkOrderDescription(), workOrder.getOmsResultSummary(), "工单审核要求整改");
     return opinion == null ? base : base + "\n审核意见：" + opinion;
+  }
+
+  private void ensureNonconformityPendingDisposition(BizProjectTaskWorkOrderEntity workOrder) {
+    if (!Objects.equals(workOrder.getReviewLocked(), 1)
+        || !"rectification_required".equals(workOrder.getIrisReviewStatus())) {
+      throw new BusinessException("PROJECT_WORK_ORDER_NOT_NONCONFORMING", "PROJECT_WORK_ORDER_NOT_NONCONFORMING");
+    }
+    if (trimToNull(workOrder.getNonconformityDisposition()) != null || workOrder.getRectificationId() != null) {
+      throw new BusinessException(
+          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED",
+          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED"
+      );
+    }
+  }
+
+  private void ensureWorkOrderNotReviewed(BizProjectTaskWorkOrderEntity workOrder) {
+    // 工单审核后锁定业务操作，只保留详情、日志等只读查看能力。
+    if (Objects.equals(workOrder.getReviewLocked(), 1)) {
+      throw new BusinessException("PROJECT_WORK_ORDER_REVIEW_LOCKED", "PROJECT_WORK_ORDER_REVIEW_LOCKED");
+    }
   }
 
   private void updateTaskStatusAfterWorkOrderReview(BizProjectTaskEntity task, CurrentUserPrincipal principal) {
@@ -1044,6 +1142,10 @@ public class ProjectService {
         DateTimeFormatters.formatDateTime(workOrder.getIrisReviewedAt()),
         workOrder.getIrisReviewedBy() == null ? null : String.valueOf(workOrder.getIrisReviewedBy()),
         workOrder.getRectificationId() == null ? null : String.valueOf(workOrder.getRectificationId()),
+        workOrder.getNonconformityDisposition(),
+        workOrder.getRiskAcceptanceReason(),
+        DateTimeFormatters.formatDateTime(workOrder.getRiskAcceptedAt()),
+        workOrder.getRiskAcceptedBy() == null ? null : String.valueOf(workOrder.getRiskAcceptedBy()),
         Objects.equals(workOrder.getReviewLocked(), 1),
         isWorkOrderReviewable(workOrder)
     );
@@ -1072,13 +1174,44 @@ public class ProjectService {
     return workOrder.getHandlerEmployeeNo();
   }
 
-  private boolean isOmsReviewable(String omsStatus) {
-    return "20".equals(omsStatus) || "25".equals(omsStatus) || "30".equals(omsStatus);
+  private boolean isOmsCompleted(BizProjectTaskWorkOrderEntity workOrder) {
+    return isCompletedOmsStatusText(workOrder.getOmsStatusName())
+        || isCompletedOmsStatusText(workOrder.getOmsStatus());
+  }
+
+  private boolean isCompletedOmsStatusText(String status) {
+    String normalized = trimToNull(status);
+    if (normalized == null) {
+      return false;
+    }
+    // OMS 有些接口返回中文状态，有些接口只返回状态码；这里统一把完成态收口到退回校验。
+    return "已完成".equals(normalized)
+        || "20".equals(normalized)
+        || "complete".equalsIgnoreCase(normalized)
+        || "completed".equalsIgnoreCase(normalized);
+  }
+
+  private boolean isOmsReviewableStatus(BizProjectTaskWorkOrderEntity workOrder) {
+    return isCompletedOmsStatusText(workOrder.getOmsStatusName())
+        || isCompletedOmsStatusText(workOrder.getOmsStatus())
+        || isArchivedOmsStatusText(workOrder.getOmsStatusName())
+        || isArchivedOmsStatusText(workOrder.getOmsStatus());
+  }
+
+  private boolean isArchivedOmsStatusText(String status) {
+    String normalized = trimToNull(status);
+    if (normalized == null) {
+      return false;
+    }
+    return "已归档".equals(normalized)
+        || "30".equals(normalized)
+        || "archived".equalsIgnoreCase(normalized);
   }
 
   private boolean isWorkOrderReviewable(BizProjectTaskWorkOrderEntity workOrder) {
+    // 工单审核允许 OMS 已完成和已归档；退回仍只允许已完成，两个动作不要混用同一状态口径。
     return Objects.equals(workOrder.getReviewLocked(), 0)
-        && isOmsReviewable(workOrder.getOmsStatus());
+        && isOmsReviewableStatus(workOrder);
   }
 
   private String writeJson(Object value) {

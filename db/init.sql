@@ -421,6 +421,10 @@ CREATE TABLE IF NOT EXISTS biz_project_task_work_order (
   iris_reviewed_at DATETIME NULL,
   iris_reviewed_by BIGINT NULL,
   rectification_id BIGINT NULL,
+  nonconformity_disposition VARCHAR(32) NULL,
+  risk_acceptance_reason TEXT NULL,
+  risk_accepted_at DATETIME NULL,
+  risk_accepted_by BIGINT NULL,
   review_locked TINYINT NOT NULL DEFAULT 0,
   archive_batch_id VARCHAR(64) NULL,
   detail_snapshot_json TEXT NULL,
@@ -440,7 +444,8 @@ CREATE TABLE IF NOT EXISTS biz_project_task_work_order (
   KEY idx_biz_project_wo_task (tenant_id, task_id),
   KEY idx_biz_project_wo_project (tenant_id, project_id),
   KEY idx_biz_project_wo_oms (tenant_id, oms_work_order_id),
-  KEY idx_biz_project_wo_review (tenant_id, iris_review_status)
+  KEY idx_biz_project_wo_review (tenant_id, iris_review_status),
+  KEY idx_biz_project_wo_disposition (tenant_id, nonconformity_disposition)
 );
 
 CREATE TABLE IF NOT EXISTS biz_project_rectification (

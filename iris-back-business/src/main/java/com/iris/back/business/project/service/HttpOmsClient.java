@@ -100,10 +100,15 @@ public class HttpOmsClient implements OmsClient {
     List<OmsWorkOrderLogSnapshot> logs = new ArrayList<>();
     for (JsonNode row : data) {
       logs.add(new OmsWorkOrderLogSnapshot(
-          firstText(row, "occurredAt", "createTime", "createdAt", "operateTime"),
-          firstText(row, "operator", "operatorName", "userName", "createName"),
-          firstText(row, "action", "actionName", "logType", "operation"),
-          firstText(row, "content", "remark", "description", "message")
+          // OMS 日志字段：SY_CREATETIME=创建时间，SY_CREATEUSERNAME=操作人，RECORD_GDCZ=操作动作，RECORD_CZXQ=操作详情。
+          firstText(row, "SY_CREATETIME", "occurredAt", "createTime", "createdAt", "operateTime"),
+          firstText(row, "SY_CREATEUSERNAME", "operator", "operatorName", "userName", "createName"),
+          firstText(row, "RECORD_GDCZ", "action", "actionName", "logType", "operation"),
+          firstText(row, "RECORD_CZXQ", "content", "remark", "description", "message"),
+          // RECORD_RQ=日志时间，RECORD_GS=处理时长，RECORD_FJ=附件 JSON；只有“日志”动作通常会有这些字段。
+          firstText(row, "RECORD_RQ", "recordDate", "logDate"),
+          firstText(row, "RECORD_GS", "duration", "workHours"),
+          firstJsonOrText(row, "RECORD_FJ", "attachments", "attachmentPayload")
       ));
     }
     return logs;
@@ -191,6 +196,20 @@ public class HttpOmsClient implements OmsClient {
         String text = trimToNull(value.asText());
         if (text != null) {
           return text;
+        }
+      }
+    }
+    return null;
+  }
+
+  private String firstJsonOrText(JsonNode node, String... names) {
+    for (String name : names) {
+      JsonNode value = node.get(name);
+      if (value != null && !value.isNull()) {
+        String text = value.isTextual() ? value.asText() : value.toString();
+        String normalized = trimToNull(text);
+        if (normalized != null) {
+          return normalized;
         }
       }
     }

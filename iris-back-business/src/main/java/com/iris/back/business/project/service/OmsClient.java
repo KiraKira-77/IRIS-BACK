@@ -52,7 +52,10 @@ public interface OmsClient {
       String occurredAt,
       String operator,
       String action,
-      String content
+      String content,
+      String recordDate,
+      String duration,
+      String attachmentsPayload
   ) {
   }
 

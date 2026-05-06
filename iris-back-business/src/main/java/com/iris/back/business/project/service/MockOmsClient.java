@@ -47,7 +47,10 @@ public class MockOmsClient implements OmsClient {
         DateTimeFormatters.formatDateTime(LocalDateTime.now()),
         "OMS",
         "complete",
-        "Mock OMS log for " + omsWorkOrderId
+        "Mock OMS log for " + omsWorkOrderId,
+        null,
+        null,
+        null
     ));
   }
 

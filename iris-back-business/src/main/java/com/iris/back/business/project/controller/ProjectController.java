@@ -6,6 +6,7 @@ import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderRiskAcceptRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderReturnRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderReviewRequest;
 import com.iris.back.business.project.service.ProjectService;
@@ -147,6 +148,31 @@ public class ProjectController {
     return ApiResponse.success(
         "work order returned",
         projectService.returnWorkOrder(projectId, taskId, workOrderId, request)
+    );
+  }
+
+  @PostMapping("/{projectId}/tasks/{taskId}/work-orders/{workOrderId}/rectification")
+  public ApiResponse<ProjectTaskWorkOrderDto> createWorkOrderRectification(
+      @PathVariable String projectId,
+      @PathVariable String taskId,
+      @PathVariable String workOrderId
+  ) {
+    return ApiResponse.success(
+        "work order rectification created",
+        projectService.createWorkOrderRectification(projectId, taskId, workOrderId)
+    );
+  }
+
+  @PostMapping("/{projectId}/tasks/{taskId}/work-orders/{workOrderId}/risk-acceptance")
+  public ApiResponse<ProjectTaskWorkOrderDto> acceptWorkOrderRisk(
+      @PathVariable String projectId,
+      @PathVariable String taskId,
+      @PathVariable String workOrderId,
+      @Valid @RequestBody ProjectWorkOrderRiskAcceptRequest request
+  ) {
+    return ApiResponse.success(
+        "work order risk accepted",
+        projectService.acceptWorkOrderRisk(projectId, taskId, workOrderId, request)
     );
   }
 

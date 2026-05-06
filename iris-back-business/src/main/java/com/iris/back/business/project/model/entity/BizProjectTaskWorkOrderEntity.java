@@ -34,6 +34,10 @@ public class BizProjectTaskWorkOrderEntity extends BaseEntity {
   private LocalDateTime irisReviewedAt;
   private Long irisReviewedBy;
   private Long rectificationId;
+  private String nonconformityDisposition;
+  private String riskAcceptanceReason;
+  private LocalDateTime riskAcceptedAt;
+  private Long riskAcceptedBy;
   private Integer reviewLocked;
   private String archiveBatchId;
   private String detailSnapshotJson;
@@ -256,6 +260,38 @@ public class BizProjectTaskWorkOrderEntity extends BaseEntity {
 
   public void setRectificationId(Long rectificationId) {
     this.rectificationId = rectificationId;
+  }
+
+  public String getNonconformityDisposition() {
+    return nonconformityDisposition;
+  }
+
+  public void setNonconformityDisposition(String nonconformityDisposition) {
+    this.nonconformityDisposition = nonconformityDisposition;
+  }
+
+  public String getRiskAcceptanceReason() {
+    return riskAcceptanceReason;
+  }
+
+  public void setRiskAcceptanceReason(String riskAcceptanceReason) {
+    this.riskAcceptanceReason = riskAcceptanceReason;
+  }
+
+  public LocalDateTime getRiskAcceptedAt() {
+    return riskAcceptedAt;
+  }
+
+  public void setRiskAcceptedAt(LocalDateTime riskAcceptedAt) {
+    this.riskAcceptedAt = riskAcceptedAt;
+  }
+
+  public Long getRiskAcceptedBy() {
+    return riskAcceptedBy;
+  }
+
+  public void setRiskAcceptedBy(Long riskAcceptedBy) {
+    this.riskAcceptedBy = riskAcceptedBy;
   }
 
   public Integer getReviewLocked() {

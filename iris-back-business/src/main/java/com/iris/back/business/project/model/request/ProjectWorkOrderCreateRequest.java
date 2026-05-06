@@ -8,6 +8,7 @@ import java.util.List;
 public record ProjectWorkOrderCreateRequest(
     String title,
     String description,
+    String issuedAt,
     @Valid @NotEmpty List<HandlerRequest> handlers
 ) {
 

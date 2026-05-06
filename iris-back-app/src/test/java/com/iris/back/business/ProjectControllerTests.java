@@ -311,7 +311,47 @@ class ProjectControllerTests {
         .andExpect(jsonPath("$.data.id").value("8001"))
         .andExpect(jsonPath("$.data.irisReviewStatus").value("rectification_required"))
         .andExpect(jsonPath("$.data.irisReviewOpinion").value("Missing approval record"))
+        .andExpect(jsonPath("$.data.rectificationId").doesNotExist())
+        .andExpect(jsonPath("$.data.reviewLocked").value(true));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void createWorkOrderRectificationRouteReturnsDispositionResult() throws Exception {
+    when(projectService.createWorkOrderRectification("7001", "7201", "8001"))
+        .thenReturn(sampleRectificationCreatedWorkOrder());
+
+    mockMvc.perform(post("/api/v1/projects/7001/tasks/7201/work-orders/8001/rectification"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value("8001"))
         .andExpect(jsonPath("$.data.rectificationId").value("9001"))
+        .andExpect(jsonPath("$.data.nonconformityDisposition").value("rectification_created"))
+        .andExpect(jsonPath("$.data.reviewLocked").value(true));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void acceptWorkOrderRiskRouteReturnsRiskAcceptanceResult() throws Exception {
+    when(projectService.acceptWorkOrderRisk(
+        org.mockito.ArgumentMatchers.eq("7001"),
+        org.mockito.ArgumentMatchers.eq("7201"),
+        org.mockito.ArgumentMatchers.eq("8001"),
+        any()
+    )).thenReturn(sampleRiskAcceptedWorkOrder());
+
+    mockMvc.perform(post("/api/v1/projects/7001/tasks/7201/work-orders/8001/risk-acceptance")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "reason": "业务确认承担风险"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value("8001"))
+        .andExpect(jsonPath("$.data.nonconformityDisposition").value("risk_accepted"))
+        .andExpect(jsonPath("$.data.riskAcceptanceReason").value("业务确认承担风险"))
+        .andExpect(jsonPath("$.data.riskAcceptedAt").value("2026-05-06 10:30:00"))
+        .andExpect(jsonPath("$.data.riskAcceptedBy").value("2001"))
         .andExpect(jsonPath("$.data.reviewLocked").value(true));
   }
 
@@ -414,6 +454,10 @@ class ProjectControllerTests {
         null,
         null,
         null,
+        null,
+        null,
+        null,
+        null,
         false,
         false
     );
@@ -443,6 +487,10 @@ class ProjectControllerTests {
         "2026-04-27T10:30:00",
         null,
         "pending",
+        null,
+        null,
+        null,
+        null,
         null,
         null,
         null,
@@ -479,7 +527,85 @@ class ProjectControllerTests {
         "Missing approval record",
         "2026-05-06 10:00:00",
         "2001",
+        null,
+        null,
+        null,
+        null,
+        null,
+        true,
+        false
+    );
+  }
+
+  private ProjectTaskWorkOrderDto sampleRectificationCreatedWorkOrder() {
+    return new ProjectTaskWorkOrderDto(
+        "8001",
+        "7001",
+        "7201",
+        "OMS-20260427-0001",
+        "7201:EMP001:8001",
+        "201",
+        "EMP001",
+        "Handler A",
+        "Finance check",
+        "Handle in OMS",
+        "2026-05-06 09:00:00",
+        "2026-05-06 09:00:00",
+        "20",
+        "completed",
+        "OMS work order completed",
+        null,
+        null,
+        null,
+        "synced",
+        null,
+        null,
+        "rectification_required",
+        "Missing approval record",
+        "2026-05-06 10:00:00",
+        "2001",
         "9001",
+        "rectification_created",
+        null,
+        null,
+        null,
+        true,
+        false
+    );
+  }
+
+  private ProjectTaskWorkOrderDto sampleRiskAcceptedWorkOrder() {
+    return new ProjectTaskWorkOrderDto(
+        "8001",
+        "7001",
+        "7201",
+        "OMS-20260427-0001",
+        "7201:EMP001:8001",
+        "201",
+        "EMP001",
+        "Handler A",
+        "Finance check",
+        "Handle in OMS",
+        "2026-05-06 09:00:00",
+        "2026-05-06 09:00:00",
+        "20",
+        "completed",
+        "OMS work order completed",
+        null,
+        null,
+        null,
+        "synced",
+        null,
+        null,
+        "rectification_required",
+        "Missing approval record",
+        "2026-05-06 10:00:00",
+        "2001",
+        null,
+        "risk_accepted",
+        "业务确认承担风险",
+        "2026-05-06 10:30:00",
+        "2001",
         true,
         false
     );
@@ -512,6 +638,10 @@ class ProjectControllerTests {
         "Need more evidence",
         "2026-05-06 11:00:00",
         "2001",
+        null,
+        null,
+        null,
+        null,
         null,
         false,
         false

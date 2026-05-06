@@ -27,6 +27,10 @@ public record ProjectTaskWorkOrderDto(
     String irisReviewedAt,
     String irisReviewedBy,
     String rectificationId,
+    String nonconformityDisposition,
+    String riskAcceptanceReason,
+    String riskAcceptedAt,
+    String riskAcceptedBy,
     Boolean reviewLocked,
     Boolean reviewable
 ) {

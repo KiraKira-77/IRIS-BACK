@@ -299,6 +299,7 @@ public class ProjectService {
           );
         })
         .toList();
+    // 先真实创建 OMS 工单，再落本地记录；本地保存 OMS 返回的工单号用于后续详情、日志、退回。
     Map<String, OmsClient.OmsCreateResult> resultByHandlerId = omsClient.createWorkOrders(toTaskDto(task), commands)
         .stream()
         .collect(Collectors.toMap(OmsClient.OmsCreateResult::handlerId, Function.identity(), (left, right) -> left));
@@ -413,14 +414,17 @@ public class ProjectService {
     );
     String omsWorkOrderId = normalizeRequiredText(workOrder.getOmsWorkOrderId(), "PROJECT_WORK_ORDER_OMS_ID_REQUIRED");
     String reason = normalizeRequiredText(request.reason(), "PROJECT_WORK_ORDER_RETURN_REASON_REQUIRED");
+    // 退回动作以 OMS 为准；OMS 调用失败时直接抛错，避免内控侧状态和 OMS 状态不一致。
     omsClient.returnWorkOrder(omsWorkOrderId, reason);
 
+    // 退回后解除内控侧复核锁定，允许后续在 OMS 重新处理完成后再次复核。
     workOrder.setIrisReviewStatus("returned");
     workOrder.setIrisReviewOpinion(reason);
     workOrder.setIrisReviewedAt(LocalDateTime.now());
     workOrder.setIrisReviewedBy(principal.userId());
     workOrder.setReviewLocked(0);
     workOrder.setUpdatedBy(principal.userId());
+    // 退回成功后立即同步一次 OMS 详情和日志，让前端看到 OMS 最新状态。
     syncWorkOrderFromOms(workOrder, principal, omsWorkOrderId);
     projectTaskWorkOrderMapper.updateById(workOrder);
     return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
@@ -431,6 +435,7 @@ public class ProjectService {
       CurrentUserPrincipal principal,
       String omsWorkOrderId
   ) {
+    // 本地只保存 OMS 快照，不在内控侧自行推导 OMS 状态，避免两套状态口径不一致。
     OmsClient.OmsWorkOrderSnapshot snapshot = omsClient.getWorkOrder(omsWorkOrderId);
     List<OmsClient.OmsWorkOrderLogSnapshot> logs = omsClient.getWorkOrderLogs(omsWorkOrderId);
     List<OmsClient.OmsAttachmentSnapshot> attachments = omsClient.getWorkOrderAttachments(omsWorkOrderId);

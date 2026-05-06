@@ -26,10 +26,12 @@ import org.springframework.stereotype.Service;
 @ConditionalOnProperty(name = "iris.oms.mode", havingValue = "http")
 public class HttpOmsClient implements OmsClient {
 
+  // OMS 侧由工单系统提供的内控任务接口，baseUrl 只配置到 /je/jolywood-it。
   private static final String CREATE_PATH = "/itsm/internal-control/task/create";
   private static final String DETAIL_PATH = "/itsm/internal-control/task/detail";
   private static final String LOGS_PATH = "/itsm/internal-control/task/logs";
   private static final String BACK_PATH = "/itsm/internal-control/task/back";
+  // OMS 状态码 20/25/30 表示内控侧可以进入复核处理，后续如 OMS 状态枚举变化需同步调整。
   private static final Set<String> REVIEWABLE_STATUSES = Set.of("20", "25", "30");
 
   private final ObjectMapper objectMapper;
@@ -52,6 +54,7 @@ public class HttpOmsClient implements OmsClient {
   public List<OmsCreateResult> createWorkOrders(ProjectTaskDto task, List<OmsCreateCommand> commands) {
     List<OmsCreateResult> results = new ArrayList<>();
     for (OmsCreateCommand command : commands) {
+      // OMS 当前用员工工号识别处理人，ownerCode 和 checkOwnerCode 都传同一个 handlerEmployeeNo。
       Map<String, Object> payload = new LinkedHashMap<>();
       payload.put("taskName", nonBlank(command.title(), task.taskName(), "IRIS internal control task"));
       payload.put("ownerCode", command.handlerEmployeeNo());
@@ -108,6 +111,7 @@ public class HttpOmsClient implements OmsClient {
 
   @Override
   public List<OmsAttachmentSnapshot> getWorkOrderAttachments(String omsWorkOrderId) {
+    // 目前 OMS 暂未提供附件接口，保留字段用于后续接入后统一回写本地快照。
     return List.of();
   }
 
@@ -127,6 +131,7 @@ public class HttpOmsClient implements OmsClient {
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
       JsonNode root = objectMapper.readTree(response.body());
       if (response.statusCode() < 200 || response.statusCode() >= 300) {
+        // HTTP 层失败也尽量透传 OMS 响应体里的中文错误，方便前端直接展示真实失败原因。
         throw new BusinessException("PROJECT_OMS_HTTP_FAILED", omsErrorMessage(root, "PROJECT_OMS_HTTP_FAILED"));
       }
       ensureSuccess(root);
@@ -147,6 +152,7 @@ public class HttpOmsClient implements OmsClient {
       if (!success.asBoolean()) {
         throw new BusinessException("PROJECT_OMS_RESPONSE_FAILED", omsErrorMessage(root, "PROJECT_OMS_RESPONSE_FAILED"));
       }
+      // OMS 有些成功响应 code 不是统一成功码，只要 success=true 就按成功处理。
       return;
     }
     JsonNode code = root.get("code");

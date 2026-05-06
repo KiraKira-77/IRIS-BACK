@@ -5,6 +5,9 @@ import java.util.List;
 
 public interface OmsClient {
 
+  /**
+   * OMS 工单客户端只表达内控系统需要的能力，具体 HTTP 字段兼容留给实现类处理。
+   */
   List<OmsCreateResult> createWorkOrders(ProjectTaskDto task, List<OmsCreateCommand> commands);
 
   OmsWorkOrderSnapshot getWorkOrder(String omsWorkOrderId);

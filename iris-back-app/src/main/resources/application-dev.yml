@@ -18,6 +18,7 @@ logging:
 
 iris:
   oms:
+    # 开发环境直接调用 OMS 工单系统；生产环境地址应由对应 profile 覆盖。
     mode: http
     base-url: http://10.8.25.218:8002/je/jolywood-it
     timeout-seconds: 5

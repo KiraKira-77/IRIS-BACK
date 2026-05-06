@@ -13,6 +13,8 @@ public interface OmsClient {
 
   List<OmsAttachmentSnapshot> getWorkOrderAttachments(String omsWorkOrderId);
 
+  void returnWorkOrder(String omsWorkOrderId, String reason);
+
   record OmsCreateCommand(
       String handlerId,
       String handlerEmployeeNo,

@@ -456,7 +456,7 @@ CREATE TABLE IF NOT EXISTS biz_project_rectification (
   task_id BIGINT NOT NULL,
   checklist_item_id BIGINT NOT NULL,
   check_content TEXT NULL,
-  source_work_order_record_id BIGINT NOT NULL,
+  source_work_order_record_id BIGINT NULL,
   oms_work_order_id VARCHAR(100) NULL,
   assignee_id BIGINT NULL,
   assignee_name VARCHAR(100) NULL,
@@ -473,7 +473,7 @@ CREATE TABLE IF NOT EXISTS biz_project_rectification (
   updated_by BIGINT NULL,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uk_biz_project_rect_code (tenant_id, rectification_code),
-  UNIQUE KEY uk_biz_project_rect_source (tenant_id, source_work_order_record_id),
+  KEY idx_biz_project_rect_source (tenant_id, source_work_order_record_id),
   KEY idx_biz_project_rect_project (tenant_id, project_id),
   KEY idx_biz_project_rect_status (tenant_id, status)
 );

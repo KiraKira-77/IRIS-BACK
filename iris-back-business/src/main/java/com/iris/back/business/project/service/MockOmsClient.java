@@ -7,9 +7,11 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 @Service
+@ConditionalOnProperty(name = "iris.oms.mode", havingValue = "mock", matchIfMissing = true)
 public class MockOmsClient implements OmsClient {
 
   private final AtomicInteger sequence = new AtomicInteger(1);
@@ -52,6 +54,11 @@ public class MockOmsClient implements OmsClient {
   @Override
   public List<OmsAttachmentSnapshot> getWorkOrderAttachments(String omsWorkOrderId) {
     return List.of();
+  }
+
+  @Override
+  public void returnWorkOrder(String omsWorkOrderId, String reason) {
+    // Mock mode accepts the return command and exposes the refreshed state through getWorkOrder.
   }
 
   private String nextOmsId() {

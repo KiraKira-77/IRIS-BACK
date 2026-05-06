@@ -13,6 +13,7 @@ import com.iris.back.business.plan.mapper.BizPlanItemMapper;
 import com.iris.back.business.plan.model.entity.BizPlanItemEntity;
 import com.iris.back.business.project.mapper.BizProjectMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
+import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskWorkOrderMapper;
 import com.iris.back.business.project.model.dto.ProjectDto;
@@ -21,12 +22,15 @@ import com.iris.back.business.project.model.dto.ProjectTaskDto;
 import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
 import com.iris.back.business.project.model.entity.BizProjectEntity;
 import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
+import com.iris.back.business.project.model.entity.BizProjectRectificationEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskWorkOrderEntity;
 import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderReturnRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderReviewRequest;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.common.model.PageResponse;
 import com.iris.back.common.util.DateTimeFormatters;
@@ -54,6 +58,7 @@ public class ProjectService {
   private final BizProjectMemberMapper projectMemberMapper;
   private final BizProjectTaskMapper projectTaskMapper;
   private final BizProjectTaskWorkOrderMapper projectTaskWorkOrderMapper;
+  private final BizProjectRectificationMapper projectRectificationMapper;
   private final BizChecklistMapper checklistMapper;
   private final BizChecklistItemMapper checklistItemMapper;
   private final BizPlanItemMapper planItemMapper;
@@ -67,6 +72,7 @@ public class ProjectService {
       BizProjectMemberMapper projectMemberMapper,
       BizProjectTaskMapper projectTaskMapper,
       BizProjectTaskWorkOrderMapper projectTaskWorkOrderMapper,
+      BizProjectRectificationMapper projectRectificationMapper,
       BizChecklistMapper checklistMapper,
       BizChecklistItemMapper checklistItemMapper,
       BizPlanItemMapper planItemMapper,
@@ -79,6 +85,7 @@ public class ProjectService {
     this.projectMemberMapper = projectMemberMapper;
     this.projectTaskMapper = projectTaskMapper;
     this.projectTaskWorkOrderMapper = projectTaskWorkOrderMapper;
+    this.projectRectificationMapper = projectRectificationMapper;
     this.checklistMapper = checklistMapper;
     this.checklistItemMapper = checklistItemMapper;
     this.planItemMapper = planItemMapper;
@@ -317,6 +324,51 @@ public class ProjectService {
   }
 
   @Transactional
+  public ProjectTaskWorkOrderDto reviewWorkOrder(
+      String projectId,
+      String taskId,
+      String workOrderId,
+      ProjectWorkOrderReviewRequest request
+  ) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
+    Long parsedWorkOrderId = parseId(workOrderId, "PROJECT_WORK_ORDER_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    ensureTaskWorkOrderAccess(project, task, principal, members);
+    BizProjectTaskWorkOrderEntity workOrder = requireWorkOrder(
+        parsedWorkOrderId,
+        parsedProjectId,
+        parsedTaskId,
+        principal.tenantId()
+    );
+    if (!isWorkOrderReviewable(workOrder)) {
+      throw new BusinessException("PROJECT_WORK_ORDER_NOT_REVIEWABLE", "PROJECT_WORK_ORDER_NOT_REVIEWABLE");
+    }
+    if (Objects.equals(workOrder.getReviewLocked(), 1)) {
+      throw new BusinessException("PROJECT_WORK_ORDER_REVIEW_LOCKED", "PROJECT_WORK_ORDER_REVIEW_LOCKED");
+    }
+
+    String reviewStatus = normalizeReviewStatus(request.reviewStatus());
+    workOrder.setIrisReviewStatus(reviewStatus);
+    workOrder.setIrisReviewOpinion(trimToNull(request.opinion()));
+    workOrder.setIrisReviewedAt(LocalDateTime.now());
+    workOrder.setIrisReviewedBy(principal.userId());
+    workOrder.setReviewLocked(1);
+    workOrder.setUpdatedBy(principal.userId());
+    if ("rectification_required".equals(reviewStatus)) {
+      BizProjectRectificationEntity rectification = createRectification(project, task, workOrder, principal, request);
+      projectRectificationMapper.insert(rectification);
+      workOrder.setRectificationId(rectification.getId());
+    }
+    projectTaskWorkOrderMapper.updateById(workOrder);
+    updateTaskStatusAfterWorkOrderReview(task, principal);
+    return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
+  }
+
+  @Transactional
   public ProjectTaskWorkOrderDto refreshWorkOrder(String projectId, String taskId, String workOrderId) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
@@ -333,6 +385,52 @@ public class ProjectService {
         principal.tenantId()
     );
     String omsWorkOrderId = normalizeRequiredText(workOrder.getOmsWorkOrderId(), "PROJECT_WORK_ORDER_OMS_ID_REQUIRED");
+    syncWorkOrderFromOms(workOrder, principal, omsWorkOrderId);
+    projectTaskWorkOrderMapper.updateById(workOrder);
+    return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
+  }
+
+  @Transactional
+  public ProjectTaskWorkOrderDto returnWorkOrder(
+      String projectId,
+      String taskId,
+      String workOrderId,
+      ProjectWorkOrderReturnRequest request
+  ) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long parsedProjectId = parseId(projectId, "PROJECT_ID_INVALID");
+    Long parsedTaskId = parseId(taskId, "PROJECT_TASK_ID_INVALID");
+    Long parsedWorkOrderId = parseId(workOrderId, "PROJECT_WORK_ORDER_ID_INVALID");
+    BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
+    BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    ensureTaskWorkOrderAccess(project, task, principal, members);
+    BizProjectTaskWorkOrderEntity workOrder = requireWorkOrder(
+        parsedWorkOrderId,
+        parsedProjectId,
+        parsedTaskId,
+        principal.tenantId()
+    );
+    String omsWorkOrderId = normalizeRequiredText(workOrder.getOmsWorkOrderId(), "PROJECT_WORK_ORDER_OMS_ID_REQUIRED");
+    String reason = normalizeRequiredText(request.reason(), "PROJECT_WORK_ORDER_RETURN_REASON_REQUIRED");
+    omsClient.returnWorkOrder(omsWorkOrderId, reason);
+
+    workOrder.setIrisReviewStatus("returned");
+    workOrder.setIrisReviewOpinion(reason);
+    workOrder.setIrisReviewedAt(LocalDateTime.now());
+    workOrder.setIrisReviewedBy(principal.userId());
+    workOrder.setReviewLocked(0);
+    workOrder.setUpdatedBy(principal.userId());
+    syncWorkOrderFromOms(workOrder, principal, omsWorkOrderId);
+    projectTaskWorkOrderMapper.updateById(workOrder);
+    return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
+  }
+
+  private void syncWorkOrderFromOms(
+      BizProjectTaskWorkOrderEntity workOrder,
+      CurrentUserPrincipal principal,
+      String omsWorkOrderId
+  ) {
     OmsClient.OmsWorkOrderSnapshot snapshot = omsClient.getWorkOrder(omsWorkOrderId);
     List<OmsClient.OmsWorkOrderLogSnapshot> logs = omsClient.getWorkOrderLogs(omsWorkOrderId);
     List<OmsClient.OmsAttachmentSnapshot> attachments = omsClient.getWorkOrderAttachments(omsWorkOrderId);
@@ -350,8 +448,6 @@ public class ProjectService {
     if (snapshot.reviewable() && workOrder.getCompletedAt() == null) {
       workOrder.setCompletedAt(LocalDateTime.now());
     }
-    projectTaskWorkOrderMapper.updateById(workOrder);
-    return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
   }
 
   @Transactional
@@ -752,6 +848,82 @@ public class ProjectService {
     return workOrder;
   }
 
+  private BizProjectRectificationEntity createRectification(
+      BizProjectEntity project,
+      BizProjectTaskEntity task,
+      BizProjectTaskWorkOrderEntity workOrder,
+      CurrentUserPrincipal principal,
+      ProjectWorkOrderReviewRequest request
+  ) {
+    Long rectificationId = nextId(new BizProjectRectificationEntity());
+    BizProjectRectificationEntity rectification = new BizProjectRectificationEntity();
+    rectification.setId(rectificationId);
+    rectification.setTenantId(principal.tenantId());
+    rectification.setRectificationCode("RECT-" + rectificationId);
+    rectification.setTitle(nonBlank(workOrder.getWorkOrderTitle(), task.getTaskName(), "整改项-" + workOrder.getId()));
+    rectification.setDescription(buildRectificationDescription(workOrder, request));
+    rectification.setTaskName(task.getTaskName());
+    rectification.setTaskDescription(task.getTaskDescription());
+    rectification.setProjectId(project.getId());
+    rectification.setProjectName(project.getProjectName());
+    rectification.setTaskId(task.getId());
+    rectification.setChecklistItemId(task.getChecklistItemId());
+    rectification.setCheckContent(task.getCheckContent());
+    rectification.setSourceWorkOrderRecordId(workOrder.getId());
+    rectification.setOmsWorkOrderId(workOrder.getOmsWorkOrderId());
+    rectification.setAssigneeId(task.getAssigneeId());
+    rectification.setAssigneeName(task.getAssigneeName());
+    rectification.setContactId(task.getContactId());
+    rectification.setContactName(task.getContactName());
+    rectification.setIssuedAt(LocalDateTime.now());
+    rectification.setStatus("pending");
+    rectification.setDeleted(0);
+    rectification.setVersion(0L);
+    rectification.setCreatedBy(principal.userId());
+    rectification.setUpdatedBy(principal.userId());
+    return rectification;
+  }
+
+  private String buildRectificationDescription(
+      BizProjectTaskWorkOrderEntity workOrder,
+      ProjectWorkOrderReviewRequest request
+  ) {
+    String opinion = trimToNull(request.opinion());
+    String base = nonBlank(workOrder.getWorkOrderDescription(), workOrder.getOmsResultSummary(), "工单审核要求整改");
+    return opinion == null ? base : base + "\n审核意见：" + opinion;
+  }
+
+  private void updateTaskStatusAfterWorkOrderReview(BizProjectTaskEntity task, CurrentUserPrincipal principal) {
+    List<BizProjectTaskWorkOrderEntity> workOrders = nullToList(projectTaskWorkOrderMapper.selectList(
+        new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
+            .eq(BizProjectTaskWorkOrderEntity::getTenantId, principal.tenantId())
+            .eq(BizProjectTaskWorkOrderEntity::getProjectId, task.getProjectId())
+            .eq(BizProjectTaskWorkOrderEntity::getTaskId, task.getId())
+    ));
+    if (workOrders.isEmpty()) {
+      return;
+    }
+    if (workOrders.stream().anyMatch(workOrder -> "rectification_required".equals(workOrder.getIrisReviewStatus()))) {
+      task.setStatus("nonconforming");
+      task.setCompletedAt(LocalDateTime.now());
+    } else if (workOrders.stream().allMatch(workOrder -> "passed".equals(workOrder.getIrisReviewStatus()))) {
+      task.setStatus("passed");
+      task.setCompletedAt(LocalDateTime.now());
+    } else {
+      return;
+    }
+    task.setUpdatedBy(principal.userId());
+    projectTaskMapper.updateById(task);
+  }
+
+  private String normalizeReviewStatus(String reviewStatus) {
+    String normalized = normalizeRequiredText(reviewStatus, "PROJECT_WORK_ORDER_REVIEW_STATUS_REQUIRED");
+    if (!Set.of("passed", "rectification_required").contains(normalized)) {
+      throw new BusinessException("PROJECT_WORK_ORDER_REVIEW_STATUS_INVALID", "PROJECT_WORK_ORDER_REVIEW_STATUS_INVALID");
+    }
+    return normalized;
+  }
+
   private ProjectDto toDto(
       BizProjectEntity project,
       List<BizProjectMemberEntity> members,
@@ -868,7 +1040,7 @@ public class ProjectService {
         workOrder.getIrisReviewedBy() == null ? null : String.valueOf(workOrder.getIrisReviewedBy()),
         workOrder.getRectificationId() == null ? null : String.valueOf(workOrder.getRectificationId()),
         Objects.equals(workOrder.getReviewLocked(), 1),
-        isOmsReviewable(workOrder.getOmsStatus())
+        isWorkOrderReviewable(workOrder)
     );
   }
 
@@ -897,6 +1069,11 @@ public class ProjectService {
 
   private boolean isOmsReviewable(String omsStatus) {
     return "20".equals(omsStatus) || "25".equals(omsStatus) || "30".equals(omsStatus);
+  }
+
+  private boolean isWorkOrderReviewable(BizProjectTaskWorkOrderEntity workOrder) {
+    return Objects.equals(workOrder.getReviewLocked(), 0)
+        && isOmsReviewable(workOrder.getOmsStatus());
   }
 
   private String writeJson(Object value) {
@@ -981,6 +1158,15 @@ public class ProjectService {
 
   private String trimToNull(String value) {
     return value == null || value.isBlank() ? null : value.trim();
+  }
+
+  private String nonBlank(String first, String second, String fallback) {
+    String normalizedFirst = trimToNull(first);
+    if (normalizedFirst != null) {
+      return normalizedFirst;
+    }
+    String normalizedSecond = trimToNull(second);
+    return normalizedSecond == null ? fallback : normalizedSecond;
   }
 
   private boolean textEquals(String left, String right) {

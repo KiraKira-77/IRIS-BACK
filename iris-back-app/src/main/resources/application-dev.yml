@@ -17,6 +17,10 @@ logging:
     com.iris.back: DEBUG
 
 iris:
+  oms:
+    mode: http
+    base-url: http://10.8.25.218:8002/je/jolywood-it
+    timeout-seconds: 5
   security:
     session-ttl-hours: 12
   minio:

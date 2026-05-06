@@ -252,6 +252,21 @@ class ProjectControllerTests {
 
   @Test
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void localWorkOrderCreationRouteIsNotExposedWhenOnlyOmsIsEnabled() throws Exception {
+    mockMvc.perform(post("/api/v1/projects/7001/tasks/7201/work-orders/local")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "title": "Finance local check",
+                  "description": "Local evidence uploaded",
+                  "handlers": [{"handlerId": "201", "handlerEmployeeNo": "EMP001", "handlerName": "Handler A"}]
+                }
+                """))
+        .andExpect(status().isMethodNotAllowed());
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
   void listWorkOrdersRouteReturnsTaskWorkOrders() throws Exception {
     when(projectService.listTaskWorkOrders("7001", "7201")).thenReturn(List.of(sampleWorkOrder()));
 
@@ -272,6 +287,57 @@ class ProjectControllerTests {
         .andExpect(jsonPath("$.data.omsStatus").value("20"))
         .andExpect(jsonPath("$.data.syncStatus").value("synced"))
         .andExpect(jsonPath("$.data.reviewable").value(true));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void reviewWorkOrderRouteReturnsReviewResultAndRectificationId() throws Exception {
+    when(projectService.reviewWorkOrder(
+        org.mockito.ArgumentMatchers.eq("7001"),
+        org.mockito.ArgumentMatchers.eq("7201"),
+        org.mockito.ArgumentMatchers.eq("8001"),
+        any()
+    )).thenReturn(sampleReviewedWorkOrder());
+
+    mockMvc.perform(post("/api/v1/projects/7001/tasks/7201/work-orders/8001/review")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "reviewStatus": "rectification_required",
+                  "opinion": "Missing approval record"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value("8001"))
+        .andExpect(jsonPath("$.data.irisReviewStatus").value("rectification_required"))
+        .andExpect(jsonPath("$.data.irisReviewOpinion").value("Missing approval record"))
+        .andExpect(jsonPath("$.data.rectificationId").value("9001"))
+        .andExpect(jsonPath("$.data.reviewLocked").value(true));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void returnWorkOrderRouteReturnsReturnedWorkOrder() throws Exception {
+    when(projectService.returnWorkOrder(
+        org.mockito.ArgumentMatchers.eq("7001"),
+        org.mockito.ArgumentMatchers.eq("7201"),
+        org.mockito.ArgumentMatchers.eq("8001"),
+        any()
+    )).thenReturn(sampleReturnedWorkOrder());
+
+    mockMvc.perform(post("/api/v1/projects/7001/tasks/7201/work-orders/8001/return")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "reason": "Need more evidence"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value("8001"))
+        .andExpect(jsonPath("$.data.omsStatus").value("40"))
+        .andExpect(jsonPath("$.data.irisReviewStatus").value("returned"))
+        .andExpect(jsonPath("$.data.irisReviewOpinion").value("Need more evidence"))
+        .andExpect(jsonPath("$.data.reviewLocked").value(false));
   }
 
   @Test
@@ -383,6 +449,72 @@ class ProjectControllerTests {
         null,
         false,
         true
+    );
+  }
+
+  private ProjectTaskWorkOrderDto sampleReviewedWorkOrder() {
+    return new ProjectTaskWorkOrderDto(
+        "8001",
+        "7001",
+        "7201",
+        "OMS-20260427-0001",
+        "7201:EMP001:8001",
+        "201",
+        "EMP001",
+        "Handler A",
+        "Finance check",
+        "Handle in OMS",
+        "2026-05-06 09:00:00",
+        "2026-05-06 09:00:00",
+        "20",
+        "completed",
+        "OMS work order completed",
+        null,
+        null,
+        null,
+        "synced",
+        null,
+        null,
+        "rectification_required",
+        "Missing approval record",
+        "2026-05-06 10:00:00",
+        "2001",
+        "9001",
+        true,
+        false
+    );
+  }
+
+  private ProjectTaskWorkOrderDto sampleReturnedWorkOrder() {
+    return new ProjectTaskWorkOrderDto(
+        "8001",
+        "7001",
+        "7201",
+        "OMS-20260427-0001",
+        "7201:EMP001:8001",
+        "201",
+        "EMP001",
+        "Handler A",
+        "Finance check",
+        "Handle in OMS",
+        "2026-05-06 09:00:00",
+        null,
+        "40",
+        "returned",
+        "Returned for more evidence",
+        "{\"taskId\":\"OMS-20260427-0001\",\"status\":\"40\"}",
+        "[]",
+        "[]",
+        "synced",
+        "2026-05-06 11:00:00",
+        null,
+        "returned",
+        "Need more evidence",
+        "2026-05-06 11:00:00",
+        "2001",
+        null,
+        false,
+        false
     );
   }
 }

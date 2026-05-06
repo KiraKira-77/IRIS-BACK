@@ -6,6 +6,8 @@ import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderCreateRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderReturnRequest;
+import com.iris.back.business.project.model.request.ProjectWorkOrderReviewRequest;
 import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.common.model.ApiResponse;
 import com.iris.back.common.model.PageResponse;
@@ -119,6 +121,32 @@ public class ProjectController {
     return ApiResponse.success(
         "work order refreshed",
         projectService.refreshWorkOrder(projectId, taskId, workOrderId)
+    );
+  }
+
+  @PostMapping("/{projectId}/tasks/{taskId}/work-orders/{workOrderId}/review")
+  public ApiResponse<ProjectTaskWorkOrderDto> reviewWorkOrder(
+      @PathVariable String projectId,
+      @PathVariable String taskId,
+      @PathVariable String workOrderId,
+      @Valid @RequestBody ProjectWorkOrderReviewRequest request
+  ) {
+    return ApiResponse.success(
+        "work order reviewed",
+        projectService.reviewWorkOrder(projectId, taskId, workOrderId, request)
+    );
+  }
+
+  @PostMapping("/{projectId}/tasks/{taskId}/work-orders/{workOrderId}/return")
+  public ApiResponse<ProjectTaskWorkOrderDto> returnWorkOrder(
+      @PathVariable String projectId,
+      @PathVariable String taskId,
+      @PathVariable String workOrderId,
+      @Valid @RequestBody ProjectWorkOrderReturnRequest request
+  ) {
+    return ApiResponse.success(
+        "work order returned",
+        projectService.returnWorkOrder(projectId, taskId, workOrderId, request)
     );
   }
 

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
 import com.iris.back.business.project.model.dto.RectificationDto;
@@ -57,7 +58,8 @@ class RectificationServiceTests {
         projectMemberMapper,
         currentUserContext,
         identifierGenerator,
-        omsClient
+        omsClient,
+        new ObjectMapper()
     );
   }
 
@@ -167,6 +169,44 @@ class RectificationServiceTests {
     assertThat(detail.rectificationOmsStatus()).isEqualTo("20");
     assertThat(detail.rectificationOmsStatusName()).isEqualTo("completed");
     assertThat(detail.rectificationWorkOrderCompletedAt()).isNotNull();
+  }
+
+  @Test
+  void getReturnsRectificationOmsDetailLogsAndAttachments() {
+    mockCurrentUser();
+    BizProjectRectificationEntity entity = rectification(9001L, "in_progress");
+    entity.setRectificationOmsWorkOrderId("OMS-RECT-001");
+    entity.setRectificationOmsStatus("10");
+    entity.setRectificationOmsStatusName("pending");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(omsClient.getWorkOrder("OMS-RECT-001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
+        "OMS-RECT-001",
+        "20",
+        "completed",
+        true,
+        "Done",
+        "{\"ticketNo\":\"OMS-RECT-001\",\"status\":\"20\"}"
+    ));
+    when(omsClient.getWorkOrderLogs("OMS-RECT-001")).thenReturn(List.of(
+        new OmsClient.OmsWorkOrderLogSnapshot(
+            "2026-05-08 10:00:00",
+            "Processor",
+            "处理完成",
+            "整改证据已补充",
+            "2026-05-08",
+            "2h",
+            "[{\"originalFileName\":\"evidence.docx\"}]"
+        )
+    ));
+    when(omsClient.getWorkOrderAttachments("OMS-RECT-001")).thenReturn(List.of(
+        new OmsClient.OmsAttachmentSnapshot("ATT-1", "evidence.docx", "http://example.test/evidence.docx")
+    ));
+
+    RectificationDto detail = rectificationService.get("9001");
+
+    assertThat(detail.rectificationOmsDetailPayload()).contains("OMS-RECT-001");
+    assertThat(detail.rectificationOmsLogPayload()).contains("整改证据已补充");
+    assertThat(detail.rectificationOmsAttachmentPayload()).contains("evidence.docx");
   }
 
   @Test

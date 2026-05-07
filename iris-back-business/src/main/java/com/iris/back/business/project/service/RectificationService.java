@@ -2,6 +2,8 @@ package com.iris.back.business.project.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
 import com.iris.back.business.project.model.dto.ProjectTaskDto;
@@ -35,19 +37,22 @@ public class RectificationService {
   private final CurrentUserContext currentUserContext;
   private final IdentifierGenerator identifierGenerator;
   private final OmsClient omsClient;
+  private final ObjectMapper objectMapper;
 
   public RectificationService(
       BizProjectRectificationMapper rectificationMapper,
       BizProjectMemberMapper projectMemberMapper,
       CurrentUserContext currentUserContext,
       IdentifierGenerator identifierGenerator,
-      OmsClient omsClient
+      OmsClient omsClient,
+      ObjectMapper objectMapper
   ) {
     this.rectificationMapper = rectificationMapper;
     this.projectMemberMapper = projectMemberMapper;
     this.currentUserContext = currentUserContext;
     this.identifierGenerator = identifierGenerator;
     this.omsClient = omsClient;
+    this.objectMapper = objectMapper;
   }
 
   public PageResponse<RectificationDto> list(RectificationListQuery query) {
@@ -75,11 +80,12 @@ public class RectificationService {
   public RectificationDto get(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizProjectRectificationEntity entity = requireRectification(parseId(id, "RECTIFICATION_ID_INVALID"), principal.tenantId());
-    if (refreshRectificationOmsSnapshot(entity)) {
+    RectificationOmsPayloads payloads = loadRectificationOmsPayloads(entity);
+    if (payloads.refreshed()) {
       entity.setUpdatedBy(principal.userId());
       rectificationMapper.updateById(entity);
     }
-    return toDto(entity);
+    return toDto(entity, payloads);
   }
 
   @Transactional
@@ -222,6 +228,10 @@ public class RectificationService {
   }
 
   private RectificationDto toDto(BizProjectRectificationEntity entity) {
+    return toDto(entity, RectificationOmsPayloads.empty());
+  }
+
+  private RectificationDto toDto(BizProjectRectificationEntity entity, RectificationOmsPayloads payloads) {
     return new RectificationDto(
         String.valueOf(entity.getId()),
         entity.getRectificationCode(),
@@ -250,6 +260,9 @@ public class RectificationService {
         entity.getRectificationOmsStatusName(),
         DateTimeFormatters.formatDateTime(entity.getRectificationWorkOrderCreatedAt()),
         DateTimeFormatters.formatDateTime(entity.getRectificationWorkOrderCompletedAt()),
+        payloads.detailPayload(),
+        payloads.logPayload(),
+        payloads.attachmentPayload(),
         List.of(),
         entity.getRemark(),
         List.of(),
@@ -332,6 +345,24 @@ public class RectificationService {
     if (snapshot.reviewable() || isCompletedStatusText(snapshot.omsStatusName()) || isCompletedStatusText(snapshot.omsStatus())) {
       entity.setRectificationWorkOrderCompletedAt(LocalDateTime.now());
     }
+  }
+
+  private RectificationOmsPayloads loadRectificationOmsPayloads(BizProjectRectificationEntity entity) {
+    String omsWorkOrderId = trimToNull(entity.getRectificationOmsWorkOrderId());
+    if (omsWorkOrderId == null) {
+      return RectificationOmsPayloads.empty();
+    }
+    // 整改单自己的 OMS 工单详情、日志和附件独立于来源 OMS 工单，详情页必须按整改工单号实时查询。
+    OmsClient.OmsWorkOrderSnapshot snapshot = omsClient.getWorkOrder(omsWorkOrderId);
+    List<OmsClient.OmsWorkOrderLogSnapshot> logs = omsClient.getWorkOrderLogs(omsWorkOrderId);
+    List<OmsClient.OmsAttachmentSnapshot> attachments = omsClient.getWorkOrderAttachments(omsWorkOrderId);
+    applyOmsSnapshot(entity, snapshot);
+    return new RectificationOmsPayloads(
+        true,
+        snapshot.payload(),
+        writeJson(logs),
+        writeJson(attachments)
+    );
   }
 
   private boolean refreshRectificationOmsSnapshot(BizProjectRectificationEntity entity) {
@@ -428,5 +459,24 @@ public class RectificationService {
 
   private <T> List<T> nullToList(List<T> values) {
     return values == null ? List.of() : values;
+  }
+
+  private String writeJson(Object value) {
+    try {
+      return objectMapper.writeValueAsString(value);
+    } catch (JsonProcessingException exception) {
+      throw new BusinessException("RECTIFICATION_OMS_PAYLOAD_SERIALIZE_FAILED", "RECTIFICATION_OMS_PAYLOAD_SERIALIZE_FAILED");
+    }
+  }
+
+  private record RectificationOmsPayloads(
+      boolean refreshed,
+      String detailPayload,
+      String logPayload,
+      String attachmentPayload
+  ) {
+    private static RectificationOmsPayloads empty() {
+      return new RectificationOmsPayloads(false, null, null, null);
+    }
   }
 }

@@ -19,6 +19,7 @@ import com.iris.back.business.plan.model.dto.PlanDto;
 import com.iris.back.business.plan.model.dto.PlanItemDto;
 import com.iris.back.business.plan.model.request.PlanListQuery;
 import com.iris.back.business.plan.service.PlanService;
+import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
 import com.iris.back.business.project.mapper.BizProjectMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectOperationLogMapper;
@@ -132,6 +133,9 @@ class PlanControllerTests {
 
   @MockBean
   private BizProjectMapper bizProjectMapper;
+
+  @MockBean
+  private BizProjectArchiveMapper bizProjectArchiveMapper;
 
   @MockBean
   private BizProjectMemberMapper bizProjectMemberMapper;

@@ -11,6 +11,7 @@ import com.iris.back.business.checklist.model.entity.BizChecklistEntity;
 import com.iris.back.business.checklist.model.entity.BizChecklistItemEntity;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
 import com.iris.back.business.plan.model.entity.BizPlanItemEntity;
+import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
 import com.iris.back.business.project.mapper.BizProjectMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
@@ -21,6 +22,7 @@ import com.iris.back.business.project.model.dto.ProjectMemberDto;
 import com.iris.back.business.project.model.dto.ProjectTaskDto;
 import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
 import com.iris.back.business.project.model.dto.RectificationDto;
+import com.iris.back.business.project.model.entity.BizProjectArchiveEntity;
 import com.iris.back.business.project.model.entity.BizProjectEntity;
 import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
 import com.iris.back.business.project.model.entity.BizProjectRectificationEntity;
@@ -43,6 +45,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -57,6 +60,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ProjectService {
 
   private final BizProjectMapper projectMapper;
+  private final BizProjectArchiveMapper projectArchiveMapper;
   private final BizProjectMemberMapper projectMemberMapper;
   private final BizProjectTaskMapper projectTaskMapper;
   private final BizProjectTaskWorkOrderMapper projectTaskWorkOrderMapper;
@@ -71,6 +75,7 @@ public class ProjectService {
 
   public ProjectService(
       BizProjectMapper projectMapper,
+      BizProjectArchiveMapper projectArchiveMapper,
       BizProjectMemberMapper projectMemberMapper,
       BizProjectTaskMapper projectTaskMapper,
       BizProjectTaskWorkOrderMapper projectTaskWorkOrderMapper,
@@ -84,6 +89,7 @@ public class ProjectService {
       ObjectMapper objectMapper
   ) {
     this.projectMapper = projectMapper;
+    this.projectArchiveMapper = projectArchiveMapper;
     this.projectMemberMapper = projectMemberMapper;
     this.projectTaskMapper = projectTaskMapper;
     this.projectTaskWorkOrderMapper = projectTaskWorkOrderMapper;
@@ -179,6 +185,61 @@ public class ProjectService {
     }
     project.setStatus("completed");
     project.setEndDate(LocalDate.now());
+    project.setUpdatedBy(principal.userId());
+    projectMapper.updateById(project);
+    return toDto(project, members, tasks);
+  }
+
+  @Transactional
+  public ProjectDto archive(String id) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizProjectEntity project = requireProject(parseId(id, "PROJECT_ID_INVALID"), principal.tenantId());
+    ensureLeader(project, principal);
+    if (!"completed".equals(project.getStatus())) {
+      throw new BusinessException("PROJECT_ARCHIVE_STATUS_INVALID", "PROJECT_ARCHIVE_STATUS_INVALID");
+    }
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    List<BizProjectTaskEntity> tasks = listTasks(principal.tenantId(), project.getId());
+    List<BizProjectTaskWorkOrderEntity> workOrders = listProjectWorkOrders(principal.tenantId(), project.getId());
+    List<BizProjectRectificationEntity> rectifications = listProjectRectifications(principal.tenantId(), project.getId());
+
+    LocalDateTime archivedAt = LocalDateTime.now();
+    String snapshotJson = buildProjectArchiveSnapshot(project, members, tasks, workOrders, rectifications, principal, archivedAt);
+    BizProjectArchiveEntity archive = existingProjectArchive(principal.tenantId(), project.getId());
+    boolean create = archive == null;
+    if (create) {
+      archive = new BizProjectArchiveEntity();
+      archive.setId(nextId(archive));
+      archive.setTenantId(principal.tenantId());
+      archive.setProjectId(project.getId());
+      archive.setDeleted(0);
+      archive.setVersion(0L);
+      archive.setCreatedBy(principal.userId());
+    }
+    archive.setProjectCode(project.getProjectCode());
+    archive.setProjectName(project.getProjectName());
+    archive.setArchiveDate(archivedAt);
+    archive.setArchivedBy(principal.userId());
+    archive.setArchivedByName(principal.username());
+    archive.setStatus("active");
+    archive.setTaskCount(tasks.size());
+    archive.setWorkOrderCount(workOrders.size());
+    archive.setRectificationCount(rectifications.size());
+    archive.setDocumentCount(countArchiveDocuments(workOrders));
+    archive.setSnapshotVersion("v1");
+    archive.setSnapshotJson(snapshotJson);
+    archive.setUpdatedBy(principal.userId());
+    if (create) {
+      projectArchiveMapper.insert(archive);
+    } else {
+      projectArchiveMapper.updateById(archive);
+    }
+
+    project.setStatus("archived");
+    project.setArchiveStatus("completed");
+    project.setArchiveStartedAt(archivedAt);
+    project.setArchiveCompletedAt(archivedAt);
+    project.setArchiveError(null);
     project.setUpdatedBy(principal.userId());
     projectMapper.updateById(project);
     return toDto(project, members, tasks);
@@ -747,6 +808,195 @@ public class ProjectService {
     return nullToList(projectTaskMapper.selectList(new LambdaQueryWrapper<BizProjectTaskEntity>()
         .eq(BizProjectTaskEntity::getTenantId, tenantId)
         .eq(BizProjectTaskEntity::getProjectId, projectId)));
+  }
+
+  private List<BizProjectTaskWorkOrderEntity> listProjectWorkOrders(Long tenantId, Long projectId) {
+    return nullToList(projectTaskWorkOrderMapper.selectList(
+        new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
+            .eq(BizProjectTaskWorkOrderEntity::getTenantId, tenantId)
+            .eq(BizProjectTaskWorkOrderEntity::getProjectId, projectId)
+            .orderByAsc(BizProjectTaskWorkOrderEntity::getTaskId)
+            .orderByAsc(BizProjectTaskWorkOrderEntity::getId)));
+  }
+
+  private List<BizProjectRectificationEntity> listProjectRectifications(Long tenantId, Long projectId) {
+    return nullToList(projectRectificationMapper.selectList(
+        new LambdaQueryWrapper<BizProjectRectificationEntity>()
+            .eq(BizProjectRectificationEntity::getTenantId, tenantId)
+            .eq(BizProjectRectificationEntity::getProjectId, projectId)
+            .orderByAsc(BizProjectRectificationEntity::getTaskId)
+            .orderByAsc(BizProjectRectificationEntity::getId)));
+  }
+
+  private BizProjectArchiveEntity existingProjectArchive(Long tenantId, Long projectId) {
+    return projectArchiveMapper.selectOne(new LambdaQueryWrapper<BizProjectArchiveEntity>()
+        .eq(BizProjectArchiveEntity::getTenantId, tenantId)
+        .eq(BizProjectArchiveEntity::getProjectId, projectId));
+  }
+
+  private String buildProjectArchiveSnapshot(
+      BizProjectEntity project,
+      List<BizProjectMemberEntity> members,
+      List<BizProjectTaskEntity> tasks,
+      List<BizProjectTaskWorkOrderEntity> workOrders,
+      List<BizProjectRectificationEntity> rectifications,
+      CurrentUserPrincipal principal,
+      LocalDateTime archivedAt
+  ) {
+    // 项目档案是一条项目级冻结快照，不按检查项、工单或整改单拆分成多条档案，方便后续完整追溯归档时的项目状态。
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("snapshotVersion", "v1");
+    snapshot.put("archivedAt", DateTimeFormatters.formatDateTime(archivedAt));
+    snapshot.put("archivedBy", String.valueOf(principal.userId()));
+    snapshot.put("archivedByName", principal.username());
+    snapshot.put("project", projectSnapshot(project));
+    snapshot.put("members", members.stream().map(this::memberSnapshot).toList());
+    snapshot.put("tasks", tasks.stream().map(this::taskSnapshot).toList());
+    snapshot.put("workOrders", workOrders.stream().map(this::workOrderSnapshot).toList());
+    snapshot.put("rectifications", rectifications.stream().map(this::rectificationSnapshot).toList());
+    return writeJson(snapshot);
+  }
+
+  private Map<String, Object> projectSnapshot(BizProjectEntity project) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("id", String.valueOf(project.getId()));
+    snapshot.put("projectCode", project.getProjectCode());
+    snapshot.put("projectName", project.getProjectName());
+    snapshot.put("source", project.getSource());
+    snapshot.put("planId", project.getPlanId() == null ? null : String.valueOf(project.getPlanId()));
+    snapshot.put("planName", project.getPlanName());
+    snapshot.put("description", project.getDescription());
+    snapshot.put("startDate", project.getStartDate() == null ? null : project.getStartDate().toString());
+    snapshot.put("endDate", project.getEndDate() == null ? null : project.getEndDate().toString());
+    snapshot.put("status", project.getStatus());
+    snapshot.put("tagIds", splitCsv(project.getTagIds()));
+    snapshot.put("tagNames", splitCsv(project.getTagNames()));
+    snapshot.put("leaderId", project.getLeaderId() == null ? null : String.valueOf(project.getLeaderId()));
+    snapshot.put("leaderName", project.getLeaderName());
+    snapshot.put("checklistIds", splitCsv(project.getChecklistIds()));
+    snapshot.put("archiveStatus", project.getArchiveStatus());
+    return snapshot;
+  }
+
+  private Map<String, Object> memberSnapshot(BizProjectMemberEntity member) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("id", String.valueOf(member.getId()));
+    snapshot.put("personnelId", member.getPersonnelId() == null ? null : String.valueOf(member.getPersonnelId()));
+    snapshot.put("personnelName", member.getPersonnelName());
+    snapshot.put("employeeNo", member.getEmployeeNo());
+    snapshot.put("department", member.getDepartment());
+    snapshot.put("role", member.getRole());
+    return snapshot;
+  }
+
+  private Map<String, Object> taskSnapshot(BizProjectTaskEntity task) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("id", String.valueOf(task.getId()));
+    snapshot.put("projectId", String.valueOf(task.getProjectId()));
+    snapshot.put("checklistId", task.getChecklistId() == null ? null : String.valueOf(task.getChecklistId()));
+    snapshot.put("checklistName", task.getChecklistName());
+    snapshot.put("checklistItemId", task.getChecklistItemId() == null ? null : String.valueOf(task.getChecklistItemId()));
+    snapshot.put("checkContent", task.getCheckContent());
+    snapshot.put("checkCriterion", task.getCheckCriterion());
+    snapshot.put("controlFrequency", task.getControlFrequency());
+    snapshot.put("evaluationType", task.getEvaluationType());
+    snapshot.put("taskName", task.getTaskName());
+    snapshot.put("taskDescription", task.getTaskDescription());
+    snapshot.put("assigneeId", task.getAssigneeId() == null ? null : String.valueOf(task.getAssigneeId()));
+    snapshot.put("assigneeName", task.getAssigneeName());
+    snapshot.put("contactId", task.getContactId() == null ? null : String.valueOf(task.getContactId()));
+    snapshot.put("contactName", task.getContactName());
+    snapshot.put("status", task.getStatus());
+    snapshot.put("issuedAt", DateTimeFormatters.formatDateTime(task.getIssuedAt()));
+    snapshot.put("completedAt", DateTimeFormatters.formatDateTime(task.getCompletedAt()));
+    return snapshot;
+  }
+
+  private Map<String, Object> workOrderSnapshot(BizProjectTaskWorkOrderEntity workOrder) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("id", String.valueOf(workOrder.getId()));
+    snapshot.put("projectId", String.valueOf(workOrder.getProjectId()));
+    snapshot.put("taskId", String.valueOf(workOrder.getTaskId()));
+    snapshot.put("omsWorkOrderId", workOrder.getOmsWorkOrderId());
+    snapshot.put("idempotencyKey", workOrder.getIdempotencyKey());
+    snapshot.put("handlerId", workOrder.getHandlerId() == null ? null : String.valueOf(workOrder.getHandlerId()));
+    snapshot.put("handlerEmployeeNo", workOrder.getHandlerEmployeeNo());
+    snapshot.put("handlerName", workOrder.getHandlerName());
+    snapshot.put("workOrderTitle", workOrder.getWorkOrderTitle());
+    snapshot.put("workOrderDescription", workOrder.getWorkOrderDescription());
+    snapshot.put("issuedAt", DateTimeFormatters.formatDateTime(workOrder.getIssuedAt()));
+    snapshot.put("completedAt", DateTimeFormatters.formatDateTime(workOrder.getCompletedAt()));
+    snapshot.put("omsStatus", workOrder.getOmsStatus());
+    snapshot.put("omsStatusName", workOrder.getOmsStatusName());
+    snapshot.put("omsResultSummary", workOrder.getOmsResultSummary());
+    snapshot.put("omsDetailPayload", workOrder.getOmsDetailPayload());
+    snapshot.put("omsLogPayload", workOrder.getOmsLogPayload());
+    snapshot.put("omsAttachmentPayload", workOrder.getOmsAttachmentPayload());
+    snapshot.put("syncStatus", workOrder.getSyncStatus());
+    snapshot.put("lastSyncedAt", DateTimeFormatters.formatDateTime(workOrder.getLastSyncedAt()));
+    snapshot.put("syncError", workOrder.getSyncError());
+    snapshot.put("irisReviewStatus", workOrder.getIrisReviewStatus());
+    snapshot.put("irisReviewOpinion", workOrder.getIrisReviewOpinion());
+    snapshot.put("irisReviewedAt", DateTimeFormatters.formatDateTime(workOrder.getIrisReviewedAt()));
+    snapshot.put("irisReviewedBy", workOrder.getIrisReviewedBy() == null ? null : String.valueOf(workOrder.getIrisReviewedBy()));
+    snapshot.put("nonconformityDisposition", workOrder.getNonconformityDisposition());
+    snapshot.put("riskAcceptanceReason", workOrder.getRiskAcceptanceReason());
+    snapshot.put("riskAcceptedAt", DateTimeFormatters.formatDateTime(workOrder.getRiskAcceptedAt()));
+    snapshot.put("riskAcceptedBy", workOrder.getRiskAcceptedBy() == null ? null : String.valueOf(workOrder.getRiskAcceptedBy()));
+    return snapshot;
+  }
+
+  private Map<String, Object> rectificationSnapshot(BizProjectRectificationEntity rectification) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("id", String.valueOf(rectification.getId()));
+    snapshot.put("rectificationCode", rectification.getRectificationCode());
+    snapshot.put("title", rectification.getTitle());
+    snapshot.put("description", rectification.getDescription());
+    snapshot.put("taskName", rectification.getTaskName());
+    snapshot.put("taskDescription", rectification.getTaskDescription());
+    snapshot.put("projectId", rectification.getProjectId() == null ? null : String.valueOf(rectification.getProjectId()));
+    snapshot.put("projectName", rectification.getProjectName());
+    snapshot.put("taskId", rectification.getTaskId() == null ? null : String.valueOf(rectification.getTaskId()));
+    snapshot.put("checklistItemId", rectification.getChecklistItemId() == null ? null : String.valueOf(rectification.getChecklistItemId()));
+    snapshot.put("checkContent", rectification.getCheckContent());
+    snapshot.put("sourceWorkOrderRecordId", rectification.getSourceWorkOrderRecordId() == null ? null : String.valueOf(rectification.getSourceWorkOrderRecordId()));
+    snapshot.put("omsWorkOrderId", rectification.getOmsWorkOrderId());
+    snapshot.put("assigneeId", rectification.getAssigneeId() == null ? null : String.valueOf(rectification.getAssigneeId()));
+    snapshot.put("assigneeName", rectification.getAssigneeName());
+    snapshot.put("contactId", rectification.getContactId() == null ? null : String.valueOf(rectification.getContactId()));
+    snapshot.put("contactName", rectification.getContactName());
+    snapshot.put("issuedAt", DateTimeFormatters.formatDateTime(rectification.getIssuedAt()));
+    snapshot.put("deadline", DateTimeFormatters.formatDateTime(rectification.getDeadline()));
+    snapshot.put("completedAt", DateTimeFormatters.formatDateTime(rectification.getCompletedAt()));
+    snapshot.put("reviewResult", rectification.getReviewResult());
+    snapshot.put("rectificationOmsWorkOrderId", rectification.getRectificationOmsWorkOrderId());
+    snapshot.put("rectificationOmsStatus", rectification.getRectificationOmsStatus());
+    snapshot.put("rectificationOmsStatusName", rectification.getRectificationOmsStatusName());
+    snapshot.put("rectificationWorkOrderCreatedAt", DateTimeFormatters.formatDateTime(rectification.getRectificationWorkOrderCreatedAt()));
+    snapshot.put("rectificationWorkOrderCompletedAt", DateTimeFormatters.formatDateTime(rectification.getRectificationWorkOrderCompletedAt()));
+    snapshot.put("status", rectification.getStatus());
+    snapshot.put("remark", rectification.getRemark());
+    return snapshot;
+  }
+
+  private int countArchiveDocuments(List<BizProjectTaskWorkOrderEntity> workOrders) {
+    return workOrders.stream()
+        .map(BizProjectTaskWorkOrderEntity::getOmsAttachmentPayload)
+        .mapToInt(this::countJsonArrayItems)
+        .sum();
+  }
+
+  private int countJsonArrayItems(String payload) {
+    String normalized = trimToNull(payload);
+    if (normalized == null) {
+      return 0;
+    }
+    try {
+      var node = objectMapper.readTree(normalized);
+      return node.isArray() ? node.size() : 0;
+    } catch (JsonProcessingException exception) {
+      return 0;
+    }
   }
 
   private boolean matches(BizProjectEntity project, ProjectListQuery query) {

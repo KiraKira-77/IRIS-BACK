@@ -6,6 +6,7 @@ import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
 import com.iris.back.business.plan.mapper.BizPlanMapper;
 import com.iris.back.business.plan.service.PlanService;
+import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
 import com.iris.back.business.project.mapper.BizProjectMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectOperationLogMapper;
@@ -82,6 +83,9 @@ class IrisBackApplicationTests {
 
   @MockBean
   private BizProjectMapper bizProjectMapper;
+
+  @MockBean
+  private BizProjectArchiveMapper bizProjectArchiveMapper;
 
   @MockBean
   private BizProjectMemberMapper bizProjectMemberMapper;

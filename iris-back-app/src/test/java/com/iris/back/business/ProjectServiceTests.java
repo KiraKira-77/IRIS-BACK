@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
@@ -16,6 +17,7 @@ import com.iris.back.business.checklist.model.entity.BizChecklistItemEntity;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
 import com.iris.back.business.plan.model.entity.BizPlanItemEntity;
 import com.iris.back.business.project.mapper.BizProjectMapper;
+import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskMapper;
@@ -23,6 +25,7 @@ import com.iris.back.business.project.mapper.BizProjectTaskWorkOrderMapper;
 import com.iris.back.business.project.model.dto.ProjectDto;
 import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
 import com.iris.back.business.project.model.entity.BizProjectEntity;
+import com.iris.back.business.project.model.entity.BizProjectArchiveEntity;
 import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
 import com.iris.back.business.project.model.entity.BizProjectRectificationEntity;
 import com.iris.back.business.project.model.entity.BizProjectTaskEntity;
@@ -55,6 +58,9 @@ class ProjectServiceTests {
 
   @Mock
   private BizProjectMapper projectMapper;
+
+  @Mock
+  private BizProjectArchiveMapper projectArchiveMapper;
 
   @Mock
   private BizProjectMemberMapper projectMemberMapper;
@@ -92,6 +98,7 @@ class ProjectServiceTests {
   void setUp() {
     projectService = new ProjectService(
         projectMapper,
+        projectArchiveMapper,
         projectMemberMapper,
         projectTaskMapper,
         projectTaskWorkOrderMapper,
@@ -958,6 +965,62 @@ class ProjectServiceTests {
   }
 
   @Test
+  void archiveCompletedProjectCreatesOneProjectArchiveSnapshotWithAllContent() throws Exception {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "completed");
+    BizProjectMemberEntity leader = member(7001L, 2001L, "leader");
+    BizProjectTaskEntity task = task(7201L, 7001L, "nonconforming");
+    BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
+    workOrder.setOmsDetailPayload("{\"RECORD_XQ\":\"detail\"}");
+    workOrder.setOmsLogPayload("[{\"RECORD_CZXQ\":\"补充说明\",\"RECORD_GDCZ\":\"处理\",\"SY_CREATETIME\":\"2026-05-06 09:00:00\"}]");
+    workOrder.setOmsAttachmentPayload("[{\"originalFileName\":\"测试报告.docx\"}]");
+    BizProjectRectificationEntity rectification = rectification(9001L, 7001L, 7201L, 8001L);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(leader));
+    when(projectTaskMapper.selectList(any())).thenReturn(List.of(task));
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
+    when(projectRectificationMapper.selectList(any())).thenReturn(List.of(rectification));
+    when(identifierGenerator.nextId(any())).thenReturn(9101L);
+
+    ProjectDto archived = projectService.archive("7001");
+
+    ArgumentCaptor<BizProjectArchiveEntity> archiveCaptor = ArgumentCaptor.forClass(BizProjectArchiveEntity.class);
+    ArgumentCaptor<BizProjectEntity> projectCaptor = ArgumentCaptor.forClass(BizProjectEntity.class);
+    verify(projectArchiveMapper).insert(archiveCaptor.capture());
+    verify(projectMapper).updateById(projectCaptor.capture());
+    assertThat(archived.status()).isEqualTo("archived");
+    assertThat(projectCaptor.getValue().getStatus()).isEqualTo("archived");
+    assertThat(projectCaptor.getValue().getArchiveStatus()).isEqualTo("completed");
+    assertThat(projectCaptor.getValue().getArchiveCompletedAt()).isNotNull();
+
+    BizProjectArchiveEntity archive = archiveCaptor.getValue();
+    assertThat(archive.getId()).isEqualTo(9101L);
+    assertThat(archive.getProjectId()).isEqualTo(7001L);
+    assertThat(archive.getProjectName()).isEqualTo("Finance project");
+    assertThat(archive.getStatus()).isEqualTo("active");
+    JsonNode snapshot = new ObjectMapper().readTree(archive.getSnapshotJson());
+    assertThat(snapshot.at("/project/projectName").asText()).isEqualTo("Finance project");
+    assertThat(snapshot.at("/members/0/personnelId").asText()).isEqualTo("2001");
+    assertThat(snapshot.at("/tasks/0/id").asText()).isEqualTo("7201");
+    assertThat(snapshot.at("/workOrders/0/omsWorkOrderId").asText()).isEqualTo("OMS-20260427-0001");
+    assertThat(snapshot.at("/workOrders/0/omsLogPayload").toString()).contains("RECORD_CZXQ");
+    assertThat(snapshot.at("/rectifications/0/id").asText()).isEqualTo("9001");
+  }
+
+  @Test
+  void archiveRejectsNonCompletedProject() {
+    mockCurrentUser();
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+
+    Assertions.assertThatThrownBy(() -> projectService.archive("7001"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_ARCHIVE_STATUS_INVALID");
+
+    verify(projectArchiveMapper, never()).insert(any(BizProjectArchiveEntity.class));
+    verify(projectMapper, never()).updateById(any(BizProjectEntity.class));
+  }
+
+  @Test
   void deleteOnlyAllowsNotStartedProject() {
     mockCurrentUser();
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
@@ -978,6 +1041,10 @@ class ProjectServiceTests {
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("PROJECT_LEADER_REQUIRED");
     Assertions.assertThatThrownBy(() -> projectService.delete("7001"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_LEADER_REQUIRED");
+    project.setStatus("completed");
+    Assertions.assertThatThrownBy(() -> projectService.archive("7001"))
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("PROJECT_LEADER_REQUIRED");
   }
@@ -1455,6 +1522,22 @@ class ProjectServiceTests {
     entity.setOmsStatus("20");
     entity.setOmsStatusName("已完成");
     entity.setCompletedAt(LocalDateTime.of(2026, 5, 6, 9, 0));
+    return entity;
+  }
+
+  private BizProjectRectificationEntity rectification(Long id, Long projectId, Long taskId, Long workOrderId) {
+    BizProjectRectificationEntity entity = new BizProjectRectificationEntity();
+    entity.setId(id);
+    entity.setTenantId(1001L);
+    entity.setProjectId(projectId);
+    entity.setProjectName("Finance project");
+    entity.setTaskId(taskId);
+    entity.setSourceWorkOrderRecordId(workOrderId);
+    entity.setRectificationCode("RECT-" + id);
+    entity.setTitle("整改项");
+    entity.setDescription("整改说明");
+    entity.setStatus("completed");
+    entity.setReviewResult("passed");
     return entity;
   }
 

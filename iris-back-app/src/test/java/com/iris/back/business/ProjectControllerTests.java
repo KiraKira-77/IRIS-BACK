@@ -18,6 +18,7 @@ import com.iris.back.business.plan.mapper.BizPlanItemMapper;
 import com.iris.back.business.plan.mapper.BizPlanMapper;
 import com.iris.back.business.plan.service.PlanService;
 import com.iris.back.business.project.mapper.BizProjectMapper;
+import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectOperationLogMapper;
 import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
@@ -140,6 +141,9 @@ class ProjectControllerTests {
   private BizProjectMapper bizProjectMapper;
 
   @MockBean
+  private BizProjectArchiveMapper bizProjectArchiveMapper;
+
+  @MockBean
   private BizProjectMemberMapper bizProjectMemberMapper;
 
   @MockBean
@@ -178,6 +182,7 @@ class ProjectControllerTests {
     when(projectService.create(any())).thenReturn(sampleProject());
     when(projectService.start("7001")).thenReturn(sampleProject("in_progress"));
     when(projectService.complete("7001")).thenReturn(sampleProject("completed"));
+    when(projectService.archive("7001")).thenReturn(sampleProject("archived"));
 
     mockMvc.perform(post("/api/v1/projects")
             .contentType(MediaType.APPLICATION_JSON)
@@ -203,6 +208,10 @@ class ProjectControllerTests {
     mockMvc.perform(post("/api/v1/projects/7001/complete"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("completed"));
+
+    mockMvc.perform(post("/api/v1/projects/7001/archive"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("archived"));
   }
 
   @Test

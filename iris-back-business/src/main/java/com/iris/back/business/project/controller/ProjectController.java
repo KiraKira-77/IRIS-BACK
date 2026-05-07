@@ -86,6 +86,11 @@ public class ProjectController {
     return ApiResponse.success("project completed", projectService.complete(id));
   }
 
+  @PostMapping("/{id}/archive")
+  public ApiResponse<ProjectDto> archive(@PathVariable String id) {
+    return ApiResponse.success("project archived", projectService.archive(id));
+  }
+
   @PostMapping("/{projectId}/tasks/assign")
   public ApiResponse<ProjectDto> assignTasks(
       @PathVariable String projectId,

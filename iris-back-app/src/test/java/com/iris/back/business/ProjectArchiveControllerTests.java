@@ -1,16 +1,15 @@
-package com.iris.back;
+package com.iris.back.business;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.mockito.Mockito.when;
 
-import com.iris.back.auth.model.CurrentUserResponse;
-import com.iris.back.auth.model.LoginResponse;
 import com.iris.back.auth.service.AuthService;
 import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
+import com.iris.back.business.checklist.service.ChecklistService;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
 import com.iris.back.business.plan.mapper.BizPlanMapper;
 import com.iris.back.business.plan.service.PlanService;
@@ -21,8 +20,12 @@ import com.iris.back.business.project.mapper.BizProjectOperationLogMapper;
 import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskWorkOrderMapper;
+import com.iris.back.business.project.model.dto.ProjectArchiveDto;
+import com.iris.back.business.project.service.ProjectArchiveService;
+import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
 import com.iris.back.business.standard.service.StandardService;
+import com.iris.back.common.model.PageResponse;
 import com.iris.back.framework.security.AuthSessionStore;
 import com.iris.back.system.mapper.SysFileMapper;
 import com.iris.back.system.mapper.SysFileRefMapper;
@@ -35,13 +38,13 @@ import com.iris.back.system.mapper.SysRoleMenuMapper;
 import com.iris.back.system.mapper.SysTenantMapper;
 import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.mapper.SysUserRoleMapper;
-import com.iris.back.system.service.ResourceScopeService;
+import com.iris.back.system.service.FileService;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -53,10 +56,34 @@ import org.springframework.test.web.servlet.MockMvc;
         + "com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration"
 })
 @AutoConfigureMockMvc
-class AuthControllerTests {
+class ProjectArchiveControllerTests {
 
   @Autowired
   private MockMvc mockMvc;
+
+  @MockBean
+  private ProjectArchiveService projectArchiveService;
+
+  @MockBean
+  private ProjectService projectService;
+
+  @MockBean
+  private ChecklistService checklistService;
+
+  @MockBean
+  private PlanService planService;
+
+  @MockBean
+  private StandardService standardService;
+
+  @MockBean
+  private AuthService authService;
+
+  @MockBean
+  private FileService fileService;
+
+  @MockBean
+  private AuthSessionStore authSessionStore;
 
   @MockBean
   private SysTenantMapper tenantMapper;
@@ -74,6 +101,9 @@ class AuthControllerTests {
   private SysRoleMapper roleMapper;
 
   @MockBean
+  private SysRoleMenuMapper roleMenuMapper;
+
+  @MockBean
   private SysResourceScopeMapper resourceScopeMapper;
 
   @MockBean
@@ -83,7 +113,10 @@ class AuthControllerTests {
   private SysResourceScopeUsageMapper resourceScopeUsageMapper;
 
   @MockBean
-  private SysRoleMenuMapper roleMenuMapper;
+  private SysFileMapper sysFileMapper;
+
+  @MockBean
+  private SysFileRefMapper sysFileRefMapper;
 
   @MockBean
   private BizStandardMapper bizStandardMapper;
@@ -121,66 +154,54 @@ class AuthControllerTests {
   @MockBean
   private BizProjectOperationLogMapper bizProjectOperationLogMapper;
 
-  @MockBean
-  private AuthSessionStore authSessionStore;
-
-  @MockBean
-  private AuthService authService;
-
-  @MockBean
-  private ResourceScopeService resourceScopeService;
-
-  @MockBean
-  private StandardService standardService;
-
-  @MockBean
-  private PlanService planService;
-
-  @MockBean
-  private SysFileMapper sysFileMapper;
-
-  @MockBean
-  private SysFileRefMapper sysFileRefMapper;
-
   @Test
-  void loginReturnsSuccessEnvelope() throws Exception {
-    when(authService.login(org.mockito.ArgumentMatchers.any())).thenReturn(
-        new LoginResponse("test-token", 2001L, 1001L, "Platform Administrator", "Default Tenant")
-    );
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void listArchivesReturnsProjectArchiveLedger() throws Exception {
+    when(projectArchiveService.list(any(), any(), any(), any()))
+        .thenReturn(PageResponse.of(1, 1, 10, List.of(sampleArchive())));
 
-    mockMvc.perform(post("/api/v1/auth/login")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("""
-                {
-                  "account": "admin",
-                  "password": "admin123"
-                }
-                """))
+    mockMvc.perform(get("/api/v1/archives")
+            .param("keyword", "Finance")
+            .param("status", "active")
+            .param("page", "1")
+            .param("pageSize", "10"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.success").value(true))
-        .andExpect(jsonPath("$.data.token").isNotEmpty())
-        .andExpect(jsonPath("$.data.tenantId").value(1001));
+        .andExpect(jsonPath("$.data.total").value(1))
+        .andExpect(jsonPath("$.data.records[0].projectName").value("Finance project"))
+        .andExpect(jsonPath("$.data.records[0].taskCount").value(2))
+        .andExpect(jsonPath("$.data.records[0].documentCount").value(1));
   }
 
   @Test
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
-  void currentUserReturnsDefaultProfile() throws Exception {
-    when(authService.currentUser()).thenReturn(
-        new CurrentUserResponse(
-            2001L,
-            1001L,
-            "admin",
-            "Platform Administrator",
-            "Default Tenant",
-            java.util.List.of("PLATFORM_ADMIN")
-        )
-    );
+  void archiveDetailReturnsSnapshotJson() throws Exception {
+    when(projectArchiveService.detail("9101")).thenReturn(sampleArchive());
 
-    mockMvc.perform(get("/api/v1/auth/me"))
+    mockMvc.perform(get("/api/v1/archives/9101"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.success").value(true))
-        .andExpect(jsonPath("$.data.userId").value(2001))
-        .andExpect(jsonPath("$.data.username").value("admin"))
-        .andExpect(jsonPath("$.data.roles[0]").value("PLATFORM_ADMIN"));
+        .andExpect(jsonPath("$.data.id").value("9101"))
+        .andExpect(jsonPath("$.data.snapshotJson").value("{\"project\":{\"projectName\":\"Finance project\"}}"));
+  }
+
+  private ProjectArchiveDto sampleArchive() {
+    return new ProjectArchiveDto(
+        "9101",
+        "7001",
+        "PRJ-2026-001",
+        "Finance project",
+        "2026-05-07 15:30:00",
+        "2001",
+        "Platform Administrator",
+        "active",
+        2,
+        1,
+        1,
+        1,
+        "v1",
+        "{\"project\":{\"projectName\":\"Finance project\"}}",
+        List.of(),
+        "2026-05-07 15:30:00",
+        "2026-05-07 15:30:00"
+    );
   }
 }

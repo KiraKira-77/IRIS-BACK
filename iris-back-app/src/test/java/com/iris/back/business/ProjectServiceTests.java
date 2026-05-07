@@ -972,8 +972,28 @@ class ProjectServiceTests {
     BizProjectTaskEntity task = task(7201L, 7001L, "nonconforming");
     BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
     workOrder.setOmsDetailPayload("{\"RECORD_XQ\":\"detail\"}");
-    workOrder.setOmsLogPayload("[{\"RECORD_CZXQ\":\"补充说明\",\"RECORD_GDCZ\":\"处理\",\"SY_CREATETIME\":\"2026-05-06 09:00:00\"}]");
+    workOrder.setOmsLogPayload("[{\"RECORD_CZXQ\":\"补充说明\",\"RECORD_GDCZ\":\"处理\",\"SY_CREATETIME\":\"2026-05-06 09:00:00\",\"RECORD_FJ\":\"[{\\\"originalFileName\\\":\\\"日志附件.docx\\\"}]\"}]");
     workOrder.setOmsAttachmentPayload("[{\"originalFileName\":\"测试报告.docx\"}]");
+    when(omsClient.getWorkOrder("OMS-20260427-0001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
+        "OMS-20260427-0001",
+        "30",
+        "已归档",
+        true,
+        "OMS latest result",
+        "{\"RECORD_XQ\":\"latest-detail\"}"
+    ));
+    when(omsClient.getWorkOrderLogs("OMS-20260427-0001")).thenReturn(List.of(
+        new OmsClient.OmsWorkOrderLogSnapshot(
+            "2026-05-07 10:00:00",
+            "张三",
+            "日志",
+            "归档前最新日志",
+            "2026-05-07",
+            "1.5",
+            "[{\"originalFileName\":\"归档前日志附件.docx\",\"minioUrl\":\"http://example.test/latest.docx\"}]"
+        )
+    ));
+    when(omsClient.getWorkOrderAttachments("OMS-20260427-0001")).thenReturn(List.of());
     BizProjectRectificationEntity rectification = rectification(9001L, 7001L, 7201L, 8001L);
     when(projectMapper.selectById(7001L)).thenReturn(project);
     when(projectMemberMapper.selectList(any())).thenReturn(List.of(leader));
@@ -998,13 +1018,20 @@ class ProjectServiceTests {
     assertThat(archive.getProjectId()).isEqualTo(7001L);
     assertThat(archive.getProjectName()).isEqualTo("Finance project");
     assertThat(archive.getStatus()).isEqualTo("active");
+    assertThat(archive.getDocumentCount()).isEqualTo(1);
     JsonNode snapshot = new ObjectMapper().readTree(archive.getSnapshotJson());
     assertThat(snapshot.at("/project/projectName").asText()).isEqualTo("Finance project");
     assertThat(snapshot.at("/members/0/personnelId").asText()).isEqualTo("2001");
     assertThat(snapshot.at("/tasks/0/id").asText()).isEqualTo("7201");
     assertThat(snapshot.at("/workOrders/0/omsWorkOrderId").asText()).isEqualTo("OMS-20260427-0001");
-    assertThat(snapshot.at("/workOrders/0/omsLogPayload").toString()).contains("RECORD_CZXQ");
+    assertThat(snapshot.at("/workOrders/0/omsStatusName").asText()).isEqualTo("已归档");
+    assertThat(snapshot.at("/workOrders/0/omsDetailPayload").asText()).contains("latest-detail");
+    assertThat(snapshot.at("/workOrders/0/omsLogPayload").toString()).contains("归档前最新日志");
+    assertThat(snapshot.at("/workOrders/0/omsLogPayload").toString()).contains("归档前日志附件.docx");
     assertThat(snapshot.at("/rectifications/0/id").asText()).isEqualTo("9001");
+    verify(omsClient).getWorkOrder("OMS-20260427-0001");
+    verify(omsClient).getWorkOrderLogs("OMS-20260427-0001");
+    verify(omsClient).getWorkOrderAttachments("OMS-20260427-0001");
   }
 
   @Test

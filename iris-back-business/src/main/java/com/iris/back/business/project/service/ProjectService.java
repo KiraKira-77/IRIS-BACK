@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
@@ -202,6 +203,7 @@ public class ProjectService {
     List<BizProjectTaskEntity> tasks = listTasks(principal.tenantId(), project.getId());
     List<BizProjectTaskWorkOrderEntity> workOrders = listProjectWorkOrders(principal.tenantId(), project.getId());
     List<BizProjectRectificationEntity> rectifications = listProjectRectifications(principal.tenantId(), project.getId());
+    syncProjectWorkOrdersBeforeArchive(workOrders, principal);
 
     LocalDateTime archivedAt = LocalDateTime.now();
     String snapshotJson = buildProjectArchiveSnapshot(project, members, tasks, workOrders, rectifications, principal, archivedAt);
@@ -243,6 +245,18 @@ public class ProjectService {
     project.setUpdatedBy(principal.userId());
     projectMapper.updateById(project);
     return toDto(project, members, tasks);
+  }
+
+  private void syncProjectWorkOrdersBeforeArchive(
+      List<BizProjectTaskWorkOrderEntity> workOrders,
+      CurrentUserPrincipal principal
+  ) {
+    for (BizProjectTaskWorkOrderEntity workOrder : workOrders) {
+      String omsWorkOrderId = normalizeRequiredText(workOrder.getOmsWorkOrderId(), "PROJECT_WORK_ORDER_OMS_ID_REQUIRED");
+      // 归档是最终留痕动作，生成快照前必须主动拉取 OMS 最新详情、状态、日志和附件，确保档案固定的是归档时刻的最新材料。
+      syncWorkOrderFromOms(workOrder, principal, omsWorkOrderId);
+      projectTaskWorkOrderMapper.updateById(workOrder);
+    }
   }
 
   @Transactional
@@ -981,21 +995,40 @@ public class ProjectService {
 
   private int countArchiveDocuments(List<BizProjectTaskWorkOrderEntity> workOrders) {
     return workOrders.stream()
-        .map(BizProjectTaskWorkOrderEntity::getOmsAttachmentPayload)
-        .mapToInt(this::countJsonArrayItems)
+        .mapToInt(workOrder -> countJsonArrayItems(workOrder.getOmsAttachmentPayload())
+            + countOmsLogAttachmentItems(workOrder.getOmsLogPayload()))
         .sum();
   }
 
+  private int countOmsLogAttachmentItems(String payload) {
+    JsonNode logs = readJsonArrayOrEmpty(payload);
+    int count = 0;
+    for (JsonNode log : logs) {
+      // OMS 日志附件存放在 RECORD_FJ 中，归档文件数量必须同步计入日志材料。
+      String attachmentPayload = nonBlank(
+          log.path("RECORD_FJ").asText(null),
+          log.path("attachmentsPayload").asText(null),
+          nonBlank(log.path("attachments").asText(null), log.path("attachmentPayload").asText(null), null)
+      );
+      count += countJsonArrayItems(attachmentPayload);
+    }
+    return count;
+  }
+
   private int countJsonArrayItems(String payload) {
+    return readJsonArrayOrEmpty(payload).size();
+  }
+
+  private JsonNode readJsonArrayOrEmpty(String payload) {
     String normalized = trimToNull(payload);
     if (normalized == null) {
-      return 0;
+      return objectMapper.createArrayNode();
     }
     try {
-      var node = objectMapper.readTree(normalized);
-      return node.isArray() ? node.size() : 0;
+      JsonNode node = objectMapper.readTree(normalized);
+      return node.isArray() ? node : objectMapper.createArrayNode();
     } catch (JsonProcessingException exception) {
-      return 0;
+      return objectMapper.createArrayNode();
     }
   }
 

@@ -2,6 +2,7 @@ package com.iris.back.business.project.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
@@ -119,36 +120,90 @@ public class ProjectArchiveService {
       return List.of();
     }
     try {
-      var root = objectMapper.readTree(snapshotJson);
-      var workOrders = root.path("workOrders");
+      JsonNode root = objectMapper.readTree(snapshotJson);
+      JsonNode workOrders = root.path("workOrders");
       if (!workOrders.isArray()) {
         return List.of();
       }
       List<ProjectArchiveDocumentDto> documents = new ArrayList<>();
-      for (var workOrder : workOrders) {
-        var attachments = objectMapper.readTree(workOrder.path("omsAttachmentPayload").asText("[]"));
-        if (!attachments.isArray()) {
-          continue;
-        }
-        for (int index = 0; index < attachments.size(); index++) {
-          var attachment = attachments.get(index);
-          String name = firstNonBlank(
-              attachment.path("originalFileName").asText(null),
-              attachment.path("fileName").asText(null),
-              "附件-" + (documents.size() + 1)
-          );
-          documents.add(new ProjectArchiveDocumentDto(
-              archive.getId() + "-" + workOrder.path("id").asText() + "-" + index,
-              String.valueOf(archive.getId()),
-              "OMS工单附件",
-              name,
-              List.of(objectMapper.convertValue(attachment, Object.class))
-          ));
-        }
+      for (JsonNode workOrder : workOrders) {
+        appendAttachmentDocuments(
+            documents,
+            archive,
+            workOrder,
+            "OMS工单附件",
+            "attachment",
+            workOrder.path("omsAttachmentPayload").asText("[]")
+        );
+        // OMS 的日志附件在 omsLogPayload 每条日志的 RECORD_FJ 字段中，归档台账要和工单附件一起提取，避免归档详情漏掉日志材料。
+        appendOmsLogAttachmentDocuments(documents, archive, workOrder);
       }
       return documents;
     } catch (JsonProcessingException exception) {
       return List.of();
+    }
+  }
+
+  private void appendOmsLogAttachmentDocuments(
+      List<ProjectArchiveDocumentDto> documents,
+      BizProjectArchiveEntity archive,
+      JsonNode workOrder
+  ) {
+    JsonNode logs = readArrayOrEmpty(workOrder.path("omsLogPayload").asText("[]"));
+    for (int logIndex = 0; logIndex < logs.size(); logIndex++) {
+      JsonNode log = logs.get(logIndex);
+      String attachmentPayload = firstNonBlank(
+          log.path("RECORD_FJ").asText(null),
+          log.path("attachmentsPayload").asText(null),
+          firstNonBlank(log.path("attachments").asText(null), log.path("attachmentPayload").asText(null), null)
+      );
+      appendAttachmentDocuments(
+          documents,
+          archive,
+          workOrder,
+          "OMS工单日志附件",
+          "log-" + logIndex,
+          attachmentPayload
+      );
+    }
+  }
+
+  private void appendAttachmentDocuments(
+      List<ProjectArchiveDocumentDto> documents,
+      BizProjectArchiveEntity archive,
+      JsonNode workOrder,
+      String category,
+      String idSegment,
+      String attachmentPayload
+  ) {
+    JsonNode attachments = readArrayOrEmpty(attachmentPayload);
+    for (int index = 0; index < attachments.size(); index++) {
+      JsonNode attachment = attachments.get(index);
+      String name = firstNonBlank(
+          attachment.path("originalFileName").asText(null),
+          attachment.path("fileName").asText(null),
+          "附件-" + (documents.size() + 1)
+      );
+      documents.add(new ProjectArchiveDocumentDto(
+          archive.getId() + "-" + workOrder.path("id").asText() + "-" + idSegment + "-" + index,
+          String.valueOf(archive.getId()),
+          category,
+          name,
+          List.of(objectMapper.convertValue(attachment, Object.class))
+      ));
+    }
+  }
+
+  private JsonNode readArrayOrEmpty(String payload) {
+    String normalized = trimToNull(payload);
+    if (normalized == null) {
+      return objectMapper.createArrayNode();
+    }
+    try {
+      JsonNode node = objectMapper.readTree(normalized);
+      return node.isArray() ? node : objectMapper.createArrayNode();
+    } catch (JsonProcessingException exception) {
+      return objectMapper.createArrayNode();
     }
   }
 

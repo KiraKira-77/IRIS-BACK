@@ -179,6 +179,9 @@ class RectificationControllerTests {
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
   void createSubmitAndReviewRoutesReturnRectificationPayload() throws Exception {
     when(rectificationService.create(any())).thenReturn(sampleRectification("pending"));
+    when(rectificationService.createWorkOrder("9001")).thenReturn(sampleRectification("in_progress"));
+    when(rectificationService.returnWorkOrder(org.mockito.ArgumentMatchers.eq("9001"), any()))
+        .thenReturn(sampleRectification("in_progress"));
     when(rectificationService.submit("9001")).thenReturn(sampleRectification("submitted"));
     when(rectificationService.review(org.mockito.ArgumentMatchers.eq("9001"), any()))
         .thenReturn(sampleRectification("approved"));
@@ -203,6 +206,20 @@ class RectificationControllerTests {
         .andExpect(jsonPath("$.data.id").value("9001"))
         .andExpect(jsonPath("$.data.status").value("pending"));
 
+    mockMvc.perform(post("/api/v1/rectifications/9001/work-order"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("in_progress"));
+
+    mockMvc.perform(post("/api/v1/rectifications/9001/work-order/return")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "reason": "整改证据不足"
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.status").value("in_progress"));
+
     mockMvc.perform(post("/api/v1/rectifications/9001/submit"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("submitted"));
@@ -225,8 +242,13 @@ class RectificationControllerTests {
         "RECT-9001",
         "task",
         "7201",
+        "Finance check task",
+        "Check OMS evidence",
         "7001",
         "Finance project",
+        "Missing approval record",
+        "8001",
+        "OMS-20260427-0001",
         "Fix local issue",
         "Missing approval record",
         "2002",
@@ -234,7 +256,15 @@ class RectificationControllerTests {
         "2003",
         "Reviewer",
         status,
+        "2026-05-06 09:00:00",
         "2026-05-20 18:00:00",
+        null,
+        "approve",
+        "OMS-RECT-001",
+        "20",
+        "已完成",
+        "2026-05-06 09:10:00",
+        "2026-05-08 10:30:00",
         List.of(),
         "Accepted",
         List.of(),

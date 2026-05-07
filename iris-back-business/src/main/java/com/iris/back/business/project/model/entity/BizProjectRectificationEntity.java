@@ -25,6 +25,13 @@ public class BizProjectRectificationEntity extends BaseEntity {
   private String contactName;
   private LocalDateTime issuedAt;
   private LocalDateTime deadline;
+  private LocalDateTime completedAt;
+  private String reviewResult;
+  private String rectificationOmsWorkOrderId;
+  private String rectificationOmsStatus;
+  private String rectificationOmsStatusName;
+  private LocalDateTime rectificationWorkOrderCreatedAt;
+  private LocalDateTime rectificationWorkOrderCompletedAt;
   private String status;
 
   public String getRectificationCode() {
@@ -169,6 +176,62 @@ public class BizProjectRectificationEntity extends BaseEntity {
 
   public void setDeadline(LocalDateTime deadline) {
     this.deadline = deadline;
+  }
+
+  public LocalDateTime getCompletedAt() {
+    return completedAt;
+  }
+
+  public void setCompletedAt(LocalDateTime completedAt) {
+    this.completedAt = completedAt;
+  }
+
+  public String getReviewResult() {
+    return reviewResult;
+  }
+
+  public void setReviewResult(String reviewResult) {
+    this.reviewResult = reviewResult;
+  }
+
+  public String getRectificationOmsWorkOrderId() {
+    return rectificationOmsWorkOrderId;
+  }
+
+  public void setRectificationOmsWorkOrderId(String rectificationOmsWorkOrderId) {
+    this.rectificationOmsWorkOrderId = rectificationOmsWorkOrderId;
+  }
+
+  public String getRectificationOmsStatus() {
+    return rectificationOmsStatus;
+  }
+
+  public void setRectificationOmsStatus(String rectificationOmsStatus) {
+    this.rectificationOmsStatus = rectificationOmsStatus;
+  }
+
+  public String getRectificationOmsStatusName() {
+    return rectificationOmsStatusName;
+  }
+
+  public void setRectificationOmsStatusName(String rectificationOmsStatusName) {
+    this.rectificationOmsStatusName = rectificationOmsStatusName;
+  }
+
+  public LocalDateTime getRectificationWorkOrderCreatedAt() {
+    return rectificationWorkOrderCreatedAt;
+  }
+
+  public void setRectificationWorkOrderCreatedAt(LocalDateTime rectificationWorkOrderCreatedAt) {
+    this.rectificationWorkOrderCreatedAt = rectificationWorkOrderCreatedAt;
+  }
+
+  public LocalDateTime getRectificationWorkOrderCompletedAt() {
+    return rectificationWorkOrderCompletedAt;
+  }
+
+  public void setRectificationWorkOrderCompletedAt(LocalDateTime rectificationWorkOrderCompletedAt) {
+    this.rectificationWorkOrderCompletedAt = rectificationWorkOrderCompletedAt;
   }
 
   public String getStatus() {

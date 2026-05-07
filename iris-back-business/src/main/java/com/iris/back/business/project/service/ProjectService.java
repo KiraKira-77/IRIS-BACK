@@ -20,6 +20,7 @@ import com.iris.back.business.project.model.dto.ProjectDto;
 import com.iris.back.business.project.model.dto.ProjectMemberDto;
 import com.iris.back.business.project.model.dto.ProjectTaskDto;
 import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
+import com.iris.back.business.project.model.dto.RectificationDto;
 import com.iris.back.business.project.model.entity.BizProjectEntity;
 import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
 import com.iris.back.business.project.model.entity.BizProjectRectificationEntity;
@@ -391,7 +392,7 @@ public class ProjectService {
   }
 
   @Transactional
-  public ProjectTaskWorkOrderDto createWorkOrderRectification(
+  public RectificationDto createWorkOrderRectification(
       String projectId,
       String taskId,
       String workOrderId
@@ -410,16 +411,11 @@ public class ProjectService {
         parsedTaskId,
         principal.tenantId()
     );
-    ensureAllTaskWorkOrdersReviewed(parsedProjectId, parsedTaskId, principal.tenantId());
-    ensureNonconformityPendingDisposition(workOrder);
+    ensureNonconformityCanCreateRectification(workOrder);
 
     BizProjectRectificationEntity rectification = createRectification(project, task, workOrder, principal);
     projectRectificationMapper.insert(rectification);
-    workOrder.setRectificationId(rectification.getId());
-    workOrder.setNonconformityDisposition("rectification_created");
-    workOrder.setUpdatedBy(principal.userId());
-    projectTaskWorkOrderMapper.updateById(workOrder);
-    return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
+    return toRectificationDto(rectification);
   }
 
   @Transactional
@@ -443,8 +439,14 @@ public class ProjectService {
         parsedTaskId,
         principal.tenantId()
     );
-    ensureAllTaskWorkOrdersReviewed(parsedProjectId, parsedTaskId, principal.tenantId());
     ensureNonconformityPendingDisposition(workOrder);
+    // 承担风险表示不再发起整改；如果来源不符合项工单已经生成过整改单，不能再切换为风险承担。
+    if (hasRectificationsForSourceWorkOrder(workOrder.getId(), principal.tenantId())) {
+      throw new BusinessException(
+          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED",
+          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED"
+      );
+    }
 
     workOrder.setNonconformityDisposition("risk_accepted");
     workOrder.setRiskAcceptanceReason(normalizeRequiredText(request.reason(), "PROJECT_WORK_ORDER_RISK_REASON_REQUIRED"));
@@ -962,6 +964,7 @@ public class ProjectService {
     rectification.setContactId(task.getContactId());
     rectification.setContactName(task.getContactName());
     rectification.setIssuedAt(LocalDateTime.now());
+    rectification.setDeadline(LocalDateTime.now().plusDays(7));
     rectification.setStatus("pending");
     rectification.setDeleted(0);
     rectification.setVersion(0L);
@@ -989,6 +992,28 @@ public class ProjectService {
           "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED"
       );
     }
+  }
+
+  private void ensureNonconformityCanCreateRectification(BizProjectTaskWorkOrderEntity workOrder) {
+    if (!Objects.equals(workOrder.getReviewLocked(), 1)
+        || !"rectification_required".equals(workOrder.getIrisReviewStatus())) {
+      throw new BusinessException("PROJECT_WORK_ORDER_NOT_NONCONFORMING", "PROJECT_WORK_ORDER_NOT_NONCONFORMING");
+    }
+    // 一个不符合项工单可以拆出多个整改单；只有选择“承担风险”后才视为不再生成整改单。
+    if ("risk_accepted".equals(trimToNull(workOrder.getNonconformityDisposition()))) {
+      throw new BusinessException(
+          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED",
+          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED"
+      );
+    }
+  }
+
+  private boolean hasRectificationsForSourceWorkOrder(Long workOrderId, Long tenantId) {
+    return !nullToList(projectRectificationMapper.selectList(
+        new LambdaQueryWrapper<BizProjectRectificationEntity>()
+            .eq(BizProjectRectificationEntity::getTenantId, tenantId)
+            .eq(BizProjectRectificationEntity::getSourceWorkOrderRecordId, workOrderId)
+    )).isEmpty();
   }
 
   private void ensureAllTaskWorkOrdersReviewed(Long projectId, Long taskId, Long tenantId) {
@@ -1130,6 +1155,45 @@ public class ProjectService {
 
   private ProjectTaskWorkOrderDto toWorkOrderDto(BizProjectTaskWorkOrderEntity workOrder) {
     return toWorkOrderDto(workOrder, Map.of());
+  }
+
+  private RectificationDto toRectificationDto(BizProjectRectificationEntity rectification) {
+    return new RectificationDto(
+        String.valueOf(rectification.getId()),
+        rectification.getRectificationCode(),
+        rectification.getSourceWorkOrderRecordId() == null ? "manual" : "task",
+        rectification.getTaskId() == null ? null : String.valueOf(rectification.getTaskId()),
+        rectification.getTaskName(),
+        rectification.getTaskDescription(),
+        rectification.getProjectId() == null ? null : String.valueOf(rectification.getProjectId()),
+        rectification.getProjectName(),
+        rectification.getCheckContent(),
+        rectification.getSourceWorkOrderRecordId() == null
+            ? null
+            : String.valueOf(rectification.getSourceWorkOrderRecordId()),
+        rectification.getOmsWorkOrderId(),
+        rectification.getTitle(),
+        rectification.getDescription(),
+        rectification.getAssigneeId() == null ? null : String.valueOf(rectification.getAssigneeId()),
+        rectification.getAssigneeName(),
+        rectification.getContactId() == null ? null : String.valueOf(rectification.getContactId()),
+        rectification.getContactName(),
+        rectification.getStatus(),
+        DateTimeFormatters.formatDateTime(rectification.getIssuedAt()),
+        DateTimeFormatters.formatDateTime(rectification.getDeadline()),
+        DateTimeFormatters.formatDateTime(rectification.getCompletedAt()),
+        rectification.getReviewResult(),
+        rectification.getRectificationOmsWorkOrderId(),
+        rectification.getRectificationOmsStatus(),
+        rectification.getRectificationOmsStatusName(),
+        DateTimeFormatters.formatDateTime(rectification.getRectificationWorkOrderCreatedAt()),
+        DateTimeFormatters.formatDateTime(rectification.getRectificationWorkOrderCompletedAt()),
+        List.of(),
+        rectification.getRemark(),
+        List.of(),
+        DateTimeFormatters.formatDateTime(rectification.getCreatedAt()),
+        DateTimeFormatters.formatDateTime(rectification.getUpdatedAt())
+    );
   }
 
   private ProjectTaskWorkOrderDto toWorkOrderDto(

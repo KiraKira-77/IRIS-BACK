@@ -276,7 +276,7 @@ class ProjectServiceTests {
   }
 
   @Test
-  void createRectificationForReviewedNonconformingWorkOrderMarksDisposition() {
+  void createRectificationForReviewedNonconformingWorkOrderReturnsRectificationWithoutDisposingSourceWorkOrder() {
     mockCurrentUser();
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
@@ -289,26 +289,22 @@ class ProjectServiceTests {
     when(projectMapper.selectById(7001L)).thenReturn(project);
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
     when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
-    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
     when(identifierGenerator.nextId(any())).thenReturn(9001L);
 
-    ProjectTaskWorkOrderDto disposed = projectService.createWorkOrderRectification("7001", "7201", "8001");
+    var created = projectService.createWorkOrderRectification("7001", "7201", "8001");
 
     ArgumentCaptor<BizProjectRectificationEntity> rectificationCaptor =
         ArgumentCaptor.forClass(BizProjectRectificationEntity.class);
-    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
-        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
     verify(projectRectificationMapper).insert(rectificationCaptor.capture());
-    verify(projectTaskWorkOrderMapper).updateById(workOrderCaptor.capture());
-    assertThat(disposed.rectificationId()).isEqualTo("9001");
-    assertThat(disposed.nonconformityDisposition()).isEqualTo("rectification_created");
+    verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    assertThat(created.id()).isEqualTo("9001");
+    assertThat(created.sourceWorkOrderRecordId()).isEqualTo("8001");
     assertThat(rectificationCaptor.getValue().getSourceWorkOrderRecordId()).isEqualTo(8001L);
-    assertThat(workOrderCaptor.getValue().getRectificationId()).isEqualTo(9001L);
-    assertThat(workOrderCaptor.getValue().getNonconformityDisposition()).isEqualTo("rectification_created");
+    assertThat(rectificationCaptor.getValue().getStatus()).isEqualTo("pending");
   }
 
   @Test
-  void createRectificationRejectsWhenAnyTaskWorkOrderIsNotReviewed() {
+  void createRectificationDoesNotRequireSiblingWorkOrdersReviewed() {
     mockCurrentUser();
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
@@ -316,20 +312,18 @@ class ProjectServiceTests {
     BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
     workOrder.setIrisReviewStatus("rectification_required");
     workOrder.setReviewLocked(1);
-    BizProjectTaskWorkOrderEntity pendingWorkOrder = completedOmsWorkOrder(8002L, 7001L, 7201L);
-    pendingWorkOrder.setIrisReviewStatus("pending");
-    pendingWorkOrder.setReviewLocked(0);
     when(projectMapper.selectById(7001L)).thenReturn(project);
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
     when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
-    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder, pendingWorkOrder));
 
-    Assertions.assertThatThrownBy(() -> projectService.createWorkOrderRectification("7001", "7201", "8001"))
-        .isInstanceOf(BusinessException.class)
-        .hasMessage("PROJECT_WORK_ORDER_REVIEW_INCOMPLETE");
+    when(identifierGenerator.nextId(any())).thenReturn(9001L);
 
-    verify(projectRectificationMapper, never()).insert(any(BizProjectRectificationEntity.class));
+    var created = projectService.createWorkOrderRectification("7001", "7201", "8001");
+
+    verify(projectRectificationMapper).insert(any(BizProjectRectificationEntity.class));
     verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    verify(projectTaskWorkOrderMapper, never()).selectList(any());
+    assertThat(created.id()).isEqualTo("9001");
   }
 
   @Test
@@ -344,7 +338,6 @@ class ProjectServiceTests {
     when(projectMapper.selectById(7001L)).thenReturn(project);
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
     when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
-    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
 
     ProjectTaskWorkOrderDto disposed = projectService.acceptWorkOrderRisk(
         "7001",
@@ -365,7 +358,7 @@ class ProjectServiceTests {
   }
 
   @Test
-  void acceptRiskRejectsWhenAnyTaskWorkOrderIsNotReviewed() {
+  void acceptRiskDoesNotRequireSiblingWorkOrdersReviewed() {
     mockCurrentUser();
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
@@ -373,13 +366,38 @@ class ProjectServiceTests {
     BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
     workOrder.setIrisReviewStatus("rectification_required");
     workOrder.setReviewLocked(1);
-    BizProjectTaskWorkOrderEntity pendingWorkOrder = completedOmsWorkOrder(8002L, 7001L, 7201L);
-    pendingWorkOrder.setIrisReviewStatus("pending");
-    pendingWorkOrder.setReviewLocked(0);
     when(projectMapper.selectById(7001L)).thenReturn(project);
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
     when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
-    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder, pendingWorkOrder));
+
+    ProjectTaskWorkOrderDto disposed = projectService.acceptWorkOrderRisk(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderRiskAcceptRequest("Business accepts the risk")
+    );
+
+    verify(projectTaskWorkOrderMapper).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    verify(projectTaskWorkOrderMapper, never()).selectList(any());
+    assertThat(disposed.nonconformityDisposition()).isEqualTo("risk_accepted");
+  }
+
+  @Test
+  void acceptRiskRejectsWhenSourceWorkOrderAlreadyHasRectification() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
+    workOrder.setIrisReviewStatus("rectification_required");
+    workOrder.setReviewLocked(1);
+    BizProjectRectificationEntity existing = new BizProjectRectificationEntity();
+    existing.setId(9001L);
+    existing.setSourceWorkOrderRecordId(8001L);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+    when(projectRectificationMapper.selectList(any())).thenReturn(List.of(existing));
 
     Assertions.assertThatThrownBy(() -> projectService.acceptWorkOrderRisk(
             "7001",
@@ -388,7 +406,7 @@ class ProjectServiceTests {
             new ProjectWorkOrderRiskAcceptRequest("Business accepts the risk")
         ))
         .isInstanceOf(BusinessException.class)
-        .hasMessage("PROJECT_WORK_ORDER_REVIEW_INCOMPLETE");
+        .hasMessage("PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED");
 
     verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
   }

@@ -2,6 +2,7 @@ package com.iris.back.business.project.controller;
 
 import com.iris.back.business.project.model.dto.ProjectDto;
 import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
+import com.iris.back.business.project.model.dto.RectificationDto;
 import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.model.request.ProjectTaskAssignRequest;
 import com.iris.back.business.project.model.request.ProjectUpsertRequest;
@@ -152,7 +153,7 @@ public class ProjectController {
   }
 
   @PostMapping("/{projectId}/tasks/{taskId}/work-orders/{workOrderId}/rectification")
-  public ApiResponse<ProjectTaskWorkOrderDto> createWorkOrderRectification(
+  public ApiResponse<RectificationDto> createWorkOrderRectification(
       @PathVariable String projectId,
       @PathVariable String taskId,
       @PathVariable String workOrderId

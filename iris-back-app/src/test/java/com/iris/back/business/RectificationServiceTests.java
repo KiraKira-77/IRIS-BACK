@@ -2,17 +2,23 @@ package com.iris.back.business;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.incrementer.IdentifierGenerator;
+import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.mapper.BizProjectRectificationMapper;
 import com.iris.back.business.project.model.dto.RectificationDto;
+import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
 import com.iris.back.business.project.model.entity.BizProjectRectificationEntity;
+import com.iris.back.business.project.model.request.ProjectWorkOrderReturnRequest;
 import com.iris.back.business.project.model.request.RectificationCreateRequest;
 import com.iris.back.business.project.model.request.RectificationListQuery;
 import com.iris.back.business.project.model.request.RectificationReviewRequest;
+import com.iris.back.business.project.service.OmsClient;
 import com.iris.back.business.project.service.RectificationService;
+import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
 import java.time.LocalDateTime;
@@ -31,10 +37,16 @@ class RectificationServiceTests {
   private BizProjectRectificationMapper rectificationMapper;
 
   @Mock
+  private BizProjectMemberMapper projectMemberMapper;
+
+  @Mock
   private CurrentUserContext currentUserContext;
 
   @Mock
   private IdentifierGenerator identifierGenerator;
+
+  @Mock
+  private OmsClient omsClient;
 
   private RectificationService rectificationService;
 
@@ -42,8 +54,10 @@ class RectificationServiceTests {
   void setUp() {
     rectificationService = new RectificationService(
         rectificationMapper,
+        projectMemberMapper,
         currentUserContext,
-        identifierGenerator
+        identifierGenerator,
+        omsClient
     );
   }
 
@@ -104,10 +118,103 @@ class RectificationServiceTests {
   }
 
   @Test
-  void reviewCanApproveSubmittedRectification() {
+  void createWorkOrderCreatesOneOmsTicketForPendingRectification() {
     mockCurrentUser();
-    BizProjectRectificationEntity entity = rectification(9001L, "submitted");
+    BizProjectRectificationEntity entity = rectification(9001L, "pending");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2002L, "EMP002", "Auditor")));
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("2002", "OMS-RECT-001", "created", null, "{}")
+    ));
+
+    RectificationDto created = rectificationService.createWorkOrder("9001");
+
+    verify(rectificationMapper).updateById(entity);
+    assertThat(created.status()).isEqualTo("in_progress");
+    assertThat(created.rectificationOmsWorkOrderId()).isEqualTo("OMS-RECT-001");
+    assertThat(entity.getRectificationOmsWorkOrderId()).isEqualTo("OMS-RECT-001");
+    assertThat(entity.getRectificationWorkOrderCreatedAt()).isNotNull();
+    ArgumentCaptor<List<OmsClient.OmsCreateCommand>> commandCaptor = ArgumentCaptor.forClass(List.class);
+    verify(omsClient).createWorkOrders(any(), commandCaptor.capture());
+    assertThat(commandCaptor.getValue()).singleElement().satisfies(command -> {
+      assertThat(command.handlerId()).isEqualTo("2002");
+      assertThat(command.handlerEmployeeNo()).isEqualTo("EMP002");
+      assertThat(command.idempotencyKey()).isEqualTo("rectification:9001");
+      assertThat(command.localWorkOrderId()).isEqualTo(9001L);
+    });
+  }
+
+  @Test
+  void getRefreshesInProgressRectificationOmsStatus() {
+    mockCurrentUser();
+    BizProjectRectificationEntity entity = rectification(9001L, "in_progress");
+    entity.setRectificationOmsWorkOrderId("OMS-RECT-001");
+    entity.setRectificationOmsStatus("10");
+    entity.setRectificationOmsStatusName("pending");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(omsClient.getWorkOrder("OMS-RECT-001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
+        "OMS-RECT-001",
+        "20",
+        "completed",
+        true,
+        "Done",
+        "{\"status\":\"20\"}"
+    ));
+
+    RectificationDto detail = rectificationService.get("9001");
+
+    verify(rectificationMapper).updateById(entity);
+    assertThat(detail.rectificationOmsStatus()).isEqualTo("20");
+    assertThat(detail.rectificationOmsStatusName()).isEqualTo("completed");
+    assertThat(detail.rectificationWorkOrderCompletedAt()).isNotNull();
+  }
+
+  @Test
+  void returnWorkOrderSendsCompletedRectificationOmsTicketBackForRework() {
+    mockCurrentUser();
+    BizProjectRectificationEntity entity = rectification(9001L, "in_progress");
+    entity.setRectificationOmsWorkOrderId("OMS-RECT-001");
+    entity.setRectificationOmsStatus("20");
+    entity.setRectificationOmsStatusName("已完成");
+    entity.setRectificationWorkOrderCompletedAt(LocalDateTime.of(2026, 5, 8, 10, 30));
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(omsClient.getWorkOrder("OMS-RECT-001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
+        "OMS-RECT-001",
+        "10",
+        "待领取",
+        false,
+        "Returned for rework",
+        "{\"status\":\"10\"}"
+    ));
+
+    RectificationDto returned = rectificationService.returnWorkOrder(
+        "9001",
+        new ProjectWorkOrderReturnRequest("整改证据不足")
+    );
+
+    verify(omsClient).returnWorkOrder("OMS-RECT-001", "整改证据不足");
+    verify(rectificationMapper).updateById(entity);
+    assertThat(returned.status()).isEqualTo("in_progress");
+    assertThat(returned.rectificationOmsStatusName()).isEqualTo("待领取");
+    assertThat(entity.getRectificationWorkOrderCompletedAt()).isNull();
+  }
+
+  @Test
+  void reviewRefreshesOmsStatusBeforeCheckingCompletion() {
+    mockCurrentUser();
+    BizProjectRectificationEntity entity = rectification(9001L, "in_progress");
+    entity.setRectificationOmsWorkOrderId("OMS-RECT-001");
+    entity.setRectificationOmsStatus("10");
+    entity.setRectificationOmsStatusName("pending");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(omsClient.getWorkOrder("OMS-RECT-001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
+        "OMS-RECT-001",
+        "20",
+        "completed",
+        true,
+        "Done",
+        "{\"status\":\"20\"}"
+    ));
 
     RectificationDto reviewed = rectificationService.review(
         "9001",
@@ -116,7 +223,46 @@ class RectificationServiceTests {
 
     verify(rectificationMapper).updateById(entity);
     assertThat(reviewed.status()).isEqualTo("approved");
-    assertThat(reviewed.reviewComment()).isEqualTo("Accepted");
+    assertThat(reviewed.reviewResult()).isEqualTo("approve");
+    assertThat(entity.getRectificationWorkOrderCompletedAt()).isNotNull();
+  }
+
+  @Test
+  void reviewRejectsOrApprovesCompletedRectificationWorkOrderAndLocksOrder() {
+    mockCurrentUser();
+    BizProjectRectificationEntity entity = rectification(9001L, "in_progress");
+    entity.setRectificationOmsWorkOrderId("OMS-RECT-001");
+    entity.setRectificationOmsStatus("20");
+    entity.setRectificationOmsStatusName("已完成");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+
+    RectificationDto reviewed = rectificationService.review(
+        "9001",
+        new RectificationReviewRequest("reject", "仍不满足要求")
+    );
+
+    verify(omsClient, never()).returnWorkOrder(any(), any());
+    verify(rectificationMapper).updateById(entity);
+    assertThat(reviewed.status()).isEqualTo("approved");
+    assertThat(reviewed.reviewResult()).isEqualTo("reject");
+    assertThat(reviewed.reviewComment()).isEqualTo("仍不满足要求");
+    assertThat(entity.getCompletedAt()).isNotNull();
+  }
+
+  @Test
+  void reviewRejectsAlreadyReviewedRectification() {
+    mockCurrentUser();
+    BizProjectRectificationEntity entity = rectification(9001L, "approved");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> rectificationService.review(
+        "9001",
+        new RectificationReviewRequest("approve", "Accepted")
+    ))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("RECTIFICATION_REVIEW_STATUS_INVALID");
+
+    verify(rectificationMapper, never()).updateById(any(BizProjectRectificationEntity.class));
   }
 
   private BizProjectRectificationEntity rectification(Long id, String status) {
@@ -142,6 +288,17 @@ class RectificationServiceTests {
     entity.setCreatedAt(LocalDateTime.of(2026, 5, 6, 9, 0));
     entity.setUpdatedAt(LocalDateTime.of(2026, 5, 6, 9, 0));
     return entity;
+  }
+
+  private BizProjectMemberEntity member(Long personnelId, String employeeNo, String personnelName) {
+    BizProjectMemberEntity member = new BizProjectMemberEntity();
+    member.setTenantId(1001L);
+    member.setProjectId(7001L);
+    member.setPersonnelId(personnelId);
+    member.setEmployeeNo(employeeNo);
+    member.setPersonnelName(personnelName);
+    member.setRole("auditor");
+    return member;
   }
 
   private void mockCurrentUser() {

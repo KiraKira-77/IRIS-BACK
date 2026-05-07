@@ -25,6 +25,7 @@ import com.iris.back.business.project.mapper.BizProjectTaskMapper;
 import com.iris.back.business.project.mapper.BizProjectTaskWorkOrderMapper;
 import com.iris.back.business.project.model.dto.ProjectDto;
 import com.iris.back.business.project.model.dto.ProjectTaskWorkOrderDto;
+import com.iris.back.business.project.model.dto.RectificationDto;
 import com.iris.back.business.project.model.request.ProjectListQuery;
 import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.business.standard.mapper.BizStandardMapper;
@@ -319,14 +320,14 @@ class ProjectControllerTests {
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
   void createWorkOrderRectificationRouteReturnsDispositionResult() throws Exception {
     when(projectService.createWorkOrderRectification("7001", "7201", "8001"))
-        .thenReturn(sampleRectificationCreatedWorkOrder());
+        .thenReturn(sampleRectificationCreatedOrder());
 
     mockMvc.perform(post("/api/v1/projects/7001/tasks/7201/work-orders/8001/rectification"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.id").value("8001"))
-        .andExpect(jsonPath("$.data.rectificationId").value("9001"))
-        .andExpect(jsonPath("$.data.nonconformityDisposition").value("rectification_created"))
-        .andExpect(jsonPath("$.data.reviewLocked").value(true));
+        .andExpect(jsonPath("$.data.id").value("9001"))
+        .andExpect(jsonPath("$.data.sourceWorkOrderRecordId").value("8001"))
+        .andExpect(jsonPath("$.data.sourceOmsWorkOrderId").value("OMS-20260427-0001"))
+        .andExpect(jsonPath("$.data.status").value("pending"));
   }
 
   @Test
@@ -537,40 +538,40 @@ class ProjectControllerTests {
     );
   }
 
-  private ProjectTaskWorkOrderDto sampleRectificationCreatedWorkOrder() {
-    return new ProjectTaskWorkOrderDto(
-        "8001",
-        "7001",
-        "7201",
-        "OMS-20260427-0001",
-        "7201:EMP001:8001",
-        "201",
-        "EMP001",
-        "Handler A",
-        "Finance check",
-        "Handle in OMS",
-        "2026-05-06 09:00:00",
-        "2026-05-06 09:00:00",
-        "20",
-        "completed",
-        "OMS work order completed",
-        null,
-        null,
-        null,
-        "synced",
-        null,
-        null,
-        "rectification_required",
-        "Missing approval record",
-        "2026-05-06 10:00:00",
-        "2001",
+  private RectificationDto sampleRectificationCreatedOrder() {
+    return new RectificationDto(
         "9001",
-        "rectification_created",
+        "RECT-9001",
+        "task",
+        "7201",
+        "Finance check task",
+        "Check OMS evidence",
+        "7001",
+        "Finance project",
+        "Missing approval record",
+        "8001",
+        "OMS-20260427-0001",
+        "Finance check",
+        "Handle in OMS\n审核意见：Missing approval record",
+        "2001",
+        "Platform Administrator",
+        "3001",
+        "Reviewer",
+        "pending",
+        "2026-05-06 10:30:00",
+        "2026-05-13 10:30:00",
         null,
         null,
         null,
-        true,
-        false
+        null,
+        null,
+        null,
+        null,
+        List.of(),
+        null,
+        List.of(),
+        "2026-05-06 10:30:00",
+        "2026-05-06 10:30:00"
     );
   }
 

@@ -1,6 +1,7 @@
 package com.iris.back.business.project.controller;
 
 import com.iris.back.business.project.model.dto.RectificationDto;
+import com.iris.back.business.project.model.request.ProjectWorkOrderReturnRequest;
 import com.iris.back.business.project.model.request.RectificationCreateRequest;
 import com.iris.back.business.project.model.request.RectificationListQuery;
 import com.iris.back.business.project.model.request.RectificationReviewRequest;
@@ -58,6 +59,19 @@ public class RectificationController {
   @PostMapping("/{id}/submit")
   public ApiResponse<RectificationDto> submit(@PathVariable String id) {
     return ApiResponse.success("rectification submitted", rectificationService.submit(id));
+  }
+
+  @PostMapping("/{id}/work-order")
+  public ApiResponse<RectificationDto> createWorkOrder(@PathVariable String id) {
+    return ApiResponse.success("rectification work order created", rectificationService.createWorkOrder(id));
+  }
+
+  @PostMapping("/{id}/work-order/return")
+  public ApiResponse<RectificationDto> returnWorkOrder(
+      @PathVariable String id,
+      @Valid @RequestBody ProjectWorkOrderReturnRequest request
+  ) {
+    return ApiResponse.success("rectification work order returned", rectificationService.returnWorkOrder(id, request));
   }
 
   @PostMapping("/{id}/review")

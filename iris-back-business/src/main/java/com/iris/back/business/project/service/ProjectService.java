@@ -410,6 +410,7 @@ public class ProjectService {
         parsedTaskId,
         principal.tenantId()
     );
+    ensureAllTaskWorkOrdersReviewed(parsedProjectId, parsedTaskId, principal.tenantId());
     ensureNonconformityPendingDisposition(workOrder);
 
     BizProjectRectificationEntity rectification = createRectification(project, task, workOrder, principal);
@@ -442,6 +443,7 @@ public class ProjectService {
         parsedTaskId,
         principal.tenantId()
     );
+    ensureAllTaskWorkOrdersReviewed(parsedProjectId, parsedTaskId, principal.tenantId());
     ensureNonconformityPendingDisposition(workOrder);
 
     workOrder.setNonconformityDisposition("risk_accepted");
@@ -989,6 +991,28 @@ public class ProjectService {
     }
   }
 
+  private void ensureAllTaskWorkOrdersReviewed(Long projectId, Long taskId, Long tenantId) {
+    List<BizProjectTaskWorkOrderEntity> workOrders = listTaskWorkOrderEntities(projectId, taskId, tenantId);
+    // 不符合项处置必须等同一检查项下所有工单都审核完成，避免漏审工单被提前生成整改或承担风险。
+    if (workOrders.isEmpty() || workOrders.stream().anyMatch(workOrder -> !isWorkOrderReviewed(workOrder))) {
+      throw new BusinessException("PROJECT_WORK_ORDER_REVIEW_INCOMPLETE", "PROJECT_WORK_ORDER_REVIEW_INCOMPLETE");
+    }
+  }
+
+  private List<BizProjectTaskWorkOrderEntity> listTaskWorkOrderEntities(Long projectId, Long taskId, Long tenantId) {
+    return nullToList(projectTaskWorkOrderMapper.selectList(
+        new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
+            .eq(BizProjectTaskWorkOrderEntity::getTenantId, tenantId)
+            .eq(BizProjectTaskWorkOrderEntity::getProjectId, projectId)
+            .eq(BizProjectTaskWorkOrderEntity::getTaskId, taskId)
+    ));
+  }
+
+  private boolean isWorkOrderReviewed(BizProjectTaskWorkOrderEntity workOrder) {
+    return Objects.equals(workOrder.getReviewLocked(), 1)
+        && Set.of("passed", "rectification_required").contains(workOrder.getIrisReviewStatus());
+  }
+
   private void ensureWorkOrderNotReviewed(BizProjectTaskWorkOrderEntity workOrder) {
     // 工单审核后锁定业务操作，只保留详情、日志等只读查看能力。
     if (Objects.equals(workOrder.getReviewLocked(), 1)) {
@@ -997,13 +1021,10 @@ public class ProjectService {
   }
 
   private void updateTaskStatusAfterWorkOrderReview(BizProjectTaskEntity task, CurrentUserPrincipal principal) {
-    List<BizProjectTaskWorkOrderEntity> workOrders = nullToList(projectTaskWorkOrderMapper.selectList(
-        new LambdaQueryWrapper<BizProjectTaskWorkOrderEntity>()
-            .eq(BizProjectTaskWorkOrderEntity::getTenantId, principal.tenantId())
-            .eq(BizProjectTaskWorkOrderEntity::getProjectId, task.getProjectId())
-            .eq(BizProjectTaskWorkOrderEntity::getTaskId, task.getId())
-    ));
-    if (workOrders.isEmpty()) {
+    List<BizProjectTaskWorkOrderEntity> workOrders =
+        listTaskWorkOrderEntities(task.getProjectId(), task.getId(), principal.tenantId());
+    // 检查项结论必须等所有工单都审核完再计算，防止其中一个不符合项提前覆盖整体状态。
+    if (workOrders.isEmpty() || workOrders.stream().anyMatch(workOrder -> !isWorkOrderReviewed(workOrder))) {
       return;
     }
     if (workOrders.stream().anyMatch(workOrder -> "rectification_required".equals(workOrder.getIrisReviewStatus()))) {

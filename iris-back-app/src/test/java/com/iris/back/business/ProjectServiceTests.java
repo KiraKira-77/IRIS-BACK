@@ -358,6 +358,32 @@ class ProjectServiceTests {
   }
 
   @Test
+  void acceptRiskIgnoresLegacyRectificationIdWhenNoSourceRectificationExists() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
+    workOrder.setIrisReviewStatus("rectification_required");
+    workOrder.setReviewLocked(1);
+    workOrder.setRectificationId(9001L);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    ProjectTaskWorkOrderDto disposed = projectService.acceptWorkOrderRisk(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderRiskAcceptRequest("Business accepts the risk")
+    );
+
+    verify(projectTaskWorkOrderMapper).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    assertThat(disposed.nonconformityDisposition()).isEqualTo("risk_accepted");
+    assertThat(disposed.riskAcceptanceReason()).isEqualTo("Business accepts the risk");
+  }
+
+  @Test
   void acceptRiskDoesNotRequireSiblingWorkOrdersReviewed() {
     mockCurrentUser();
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
@@ -406,7 +432,7 @@ class ProjectServiceTests {
             new ProjectWorkOrderRiskAcceptRequest("Business accepts the risk")
         ))
         .isInstanceOf(BusinessException.class)
-        .hasMessage("PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED");
+        .hasMessage("该工单已生成整改单，不能再承担风险");
 
     verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
   }

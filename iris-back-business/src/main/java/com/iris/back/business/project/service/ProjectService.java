@@ -444,7 +444,7 @@ public class ProjectService {
     if (hasRectificationsForSourceWorkOrder(workOrder.getId(), principal.tenantId())) {
       throw new BusinessException(
           "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED",
-          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED"
+          "该工单已生成整改单，不能再承担风险"
       );
     }
 
@@ -986,10 +986,11 @@ public class ProjectService {
         || !"rectification_required".equals(workOrder.getIrisReviewStatus())) {
       throw new BusinessException("PROJECT_WORK_ORDER_NOT_NONCONFORMING", "PROJECT_WORK_ORDER_NOT_NONCONFORMING");
     }
-    if (trimToNull(workOrder.getNonconformityDisposition()) != null || workOrder.getRectificationId() != null) {
+    // 整改单已经改为按来源工单一对多创建，旧的 rectificationId 只做历史展示，不能再作为是否已处置的依据。
+    if (trimToNull(workOrder.getNonconformityDisposition()) != null) {
       throw new BusinessException(
           "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED",
-          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED"
+          "该工单已处置，不能重复承担风险"
       );
     }
   }
@@ -1003,7 +1004,7 @@ public class ProjectService {
     if ("risk_accepted".equals(trimToNull(workOrder.getNonconformityDisposition()))) {
       throw new BusinessException(
           "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED",
-          "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED"
+          "该工单已承担风险，不能再生成整改单"
       );
     }
   }

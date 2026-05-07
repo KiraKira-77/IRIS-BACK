@@ -5,10 +5,12 @@ import com.iris.back.business.project.model.request.ProjectWorkOrderReturnReques
 import com.iris.back.business.project.model.request.RectificationCreateRequest;
 import com.iris.back.business.project.model.request.RectificationListQuery;
 import com.iris.back.business.project.model.request.RectificationReviewRequest;
+import com.iris.back.business.project.model.request.RectificationWorkOrderCreateRequest;
 import com.iris.back.business.project.service.RectificationService;
 import com.iris.back.common.model.ApiResponse;
 import com.iris.back.common.model.PageResponse;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -62,8 +64,11 @@ public class RectificationController {
   }
 
   @PostMapping("/{id}/work-order")
-  public ApiResponse<RectificationDto> createWorkOrder(@PathVariable String id) {
-    return ApiResponse.success("rectification work order created", rectificationService.createWorkOrder(id));
+  public ApiResponse<RectificationDto> createWorkOrder(
+      @PathVariable String id,
+      @Valid @RequestBody RectificationWorkOrderCreateRequest request
+  ) {
+    return ApiResponse.success("rectification work order created", rectificationService.createWorkOrder(id, request));
   }
 
   @PostMapping("/{id}/work-order/return")
@@ -80,5 +85,11 @@ public class RectificationController {
       @Valid @RequestBody RectificationReviewRequest request
   ) {
     return ApiResponse.success("rectification reviewed", rectificationService.review(id, request));
+  }
+
+  @DeleteMapping("/{id}")
+  public ApiResponse<Void> delete(@PathVariable String id) {
+    rectificationService.delete(id);
+    return ApiResponse.success("rectification deleted", null);
   }
 }

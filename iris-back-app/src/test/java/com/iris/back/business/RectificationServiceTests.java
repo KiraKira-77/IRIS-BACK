@@ -17,6 +17,7 @@ import com.iris.back.business.project.model.request.ProjectWorkOrderReturnReques
 import com.iris.back.business.project.model.request.RectificationCreateRequest;
 import com.iris.back.business.project.model.request.RectificationListQuery;
 import com.iris.back.business.project.model.request.RectificationReviewRequest;
+import com.iris.back.business.project.model.request.RectificationWorkOrderCreateRequest;
 import com.iris.back.business.project.service.OmsClient;
 import com.iris.back.business.project.service.RectificationService;
 import com.iris.back.common.exception.BusinessException;
@@ -67,6 +68,7 @@ class RectificationServiceTests {
   void listReturnsPagedRectificationsForCurrentTenant() {
     mockCurrentUser();
     when(rectificationMapper.selectList(any())).thenReturn(List.of(rectification(9001L, "pending")));
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
 
     var page = rectificationService.list(new RectificationListQuery(null, "pending", null, null, 1L, 10L));
 
@@ -80,8 +82,51 @@ class RectificationServiceTests {
   }
 
   @Test
+  void listDoesNotReturnDeletedRectifications() {
+    mockCurrentUser();
+    BizProjectRectificationEntity visible = rectification(9001L, "pending");
+    BizProjectRectificationEntity deleted = rectification(9002L, "pending");
+    deleted.setDeleted(1);
+    when(rectificationMapper.selectList(any())).thenReturn(List.of(visible, deleted));
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
+
+    var page = rectificationService.list(new RectificationListQuery(null, null, null, null, 1L, 10L));
+
+    assertThat(page.getTotal()).isEqualTo(1);
+    assertThat(page.getRecords()).singleElement().satisfies(item -> assertThat(item.id()).isEqualTo("9001"));
+  }
+
+  @Test
+  void listOnlyReturnsRectificationsVisibleToProjectMembers() {
+    mockCurrentUser();
+    BizProjectRectificationEntity visible = rectification(9001L, "pending");
+    BizProjectRectificationEntity hidden = rectification(9002L, "pending");
+    hidden.setProjectId(7002L);
+    when(rectificationMapper.selectList(any())).thenReturn(List.of(visible, hidden));
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "auditor")));
+
+    var page = rectificationService.list(new RectificationListQuery(null, null, null, null, 1L, 10L));
+
+    assertThat(page.getTotal()).isEqualTo(1);
+    assertThat(page.getRecords()).singleElement().satisfies(item -> assertThat(item.id()).isEqualTo("9001"));
+  }
+
+  @Test
+  void getRejectsRectificationWhenCurrentUserIsNotProjectMemberOrContact() {
+    mockCurrentUser(2999L, "outsider", "Outsider");
+    BizProjectRectificationEntity entity = rectification(9001L, "pending");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> rectificationService.get("9001"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("RECTIFICATION_FORBIDDEN");
+  }
+
+  @Test
   void createManualRectificationStoresMinimalFields() {
     mockCurrentUser();
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
     when(identifierGenerator.nextId(any())).thenReturn(9101L);
 
     RectificationDto created = rectificationService.create(new RectificationCreateRequest(
@@ -112,6 +157,7 @@ class RectificationServiceTests {
     mockCurrentUser();
     BizProjectRectificationEntity entity = rectification(9001L, "pending");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
 
     RectificationDto submitted = rectificationService.submit("9001");
 
@@ -124,12 +170,21 @@ class RectificationServiceTests {
     mockCurrentUser();
     BizProjectRectificationEntity entity = rectification(9001L, "pending");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
-    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2002L, "EMP002", "Auditor")));
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(
+        member(2001L, "admin", "Platform Administrator", "leader"),
+        member(2002L, "EMP002", "Auditor", "auditor")
+    ));
     when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
         new OmsClient.OmsCreateResult("2002", "OMS-RECT-001", "created", null, "{}")
     ));
 
-    RectificationDto created = rectificationService.createWorkOrder("9001");
+    RectificationDto created = rectificationService.createWorkOrder("9001", new RectificationWorkOrderCreateRequest(
+        "自定义整改标题",
+        "自定义整改描述",
+        "2002",
+        "EMP002",
+        "Auditor"
+    ));
 
     verify(rectificationMapper).updateById(entity);
     assertThat(created.status()).isEqualTo("in_progress");
@@ -141,9 +196,53 @@ class RectificationServiceTests {
     assertThat(commandCaptor.getValue()).singleElement().satisfies(command -> {
       assertThat(command.handlerId()).isEqualTo("2002");
       assertThat(command.handlerEmployeeNo()).isEqualTo("EMP002");
+      assertThat(command.title()).isEqualTo("自定义整改标题");
+      assertThat(command.description()).isEqualTo("自定义整改描述");
       assertThat(command.idempotencyKey()).isEqualTo("rectification:9001");
       assertThat(command.localWorkOrderId()).isEqualTo(9001L);
     });
+  }
+
+  @Test
+  void createWorkOrderAllowsRectificationAssigneeToOperate() {
+    mockCurrentUser(2002L, "EMP002", "Auditor");
+    BizProjectRectificationEntity entity = rectification(9001L, "pending");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2002L, "EMP002", "Auditor", "auditor")));
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("2002", "OMS-RECT-001", "created", null, "{}")
+    ));
+
+    RectificationDto created = rectificationService.createWorkOrder("9001", new RectificationWorkOrderCreateRequest(
+        "整改标题",
+        "整改描述",
+        "2002",
+        "EMP002",
+        "Auditor"
+    ));
+
+    assertThat(created.status()).isEqualTo("in_progress");
+    verify(rectificationMapper).updateById(entity);
+  }
+
+  @Test
+  void createWorkOrderRejectsOrdinaryProjectMember() {
+    mockCurrentUser(2004L, "member", "Member");
+    BizProjectRectificationEntity entity = rectification(9001L, "pending");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(
+        member(2004L, "member", "Member", "auditor"),
+        member(2002L, "EMP002", "Auditor", "auditor")
+    ));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> rectificationService.createWorkOrder(
+            "9001",
+            new RectificationWorkOrderCreateRequest("整改标题", "整改描述", "2002", "EMP002", "Auditor")
+        ))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("RECTIFICATION_OPERATOR_REQUIRED");
+
+    verify(rectificationMapper, never()).updateById(any(BizProjectRectificationEntity.class));
   }
 
   @Test
@@ -154,6 +253,7 @@ class RectificationServiceTests {
     entity.setRectificationOmsStatus("10");
     entity.setRectificationOmsStatusName("pending");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
     when(omsClient.getWorkOrder("OMS-RECT-001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
         "OMS-RECT-001",
         "20",
@@ -179,6 +279,7 @@ class RectificationServiceTests {
     entity.setRectificationOmsStatus("10");
     entity.setRectificationOmsStatusName("pending");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
     when(omsClient.getWorkOrder("OMS-RECT-001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
         "OMS-RECT-001",
         "20",
@@ -218,6 +319,7 @@ class RectificationServiceTests {
     entity.setRectificationOmsStatusName("已完成");
     entity.setRectificationWorkOrderCompletedAt(LocalDateTime.of(2026, 5, 8, 10, 30));
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
     when(omsClient.getWorkOrder("OMS-RECT-001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
         "OMS-RECT-001",
         "10",
@@ -247,6 +349,7 @@ class RectificationServiceTests {
     entity.setRectificationOmsStatus("10");
     entity.setRectificationOmsStatusName("pending");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
     when(omsClient.getWorkOrder("OMS-RECT-001")).thenReturn(new OmsClient.OmsWorkOrderSnapshot(
         "OMS-RECT-001",
         "20",
@@ -275,6 +378,7 @@ class RectificationServiceTests {
     entity.setRectificationOmsStatus("20");
     entity.setRectificationOmsStatusName("已完成");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
 
     RectificationDto reviewed = rectificationService.review(
         "9001",
@@ -294,6 +398,7 @@ class RectificationServiceTests {
     mockCurrentUser();
     BizProjectRectificationEntity entity = rectification(9001L, "approved");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
 
     org.assertj.core.api.Assertions.assertThatThrownBy(() -> rectificationService.review(
         "9001",
@@ -301,6 +406,33 @@ class RectificationServiceTests {
     ))
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("RECTIFICATION_REVIEW_STATUS_INVALID");
+
+    verify(rectificationMapper, never()).updateById(any(BizProjectRectificationEntity.class));
+  }
+
+  @Test
+  void deleteOnlyAllowsPendingRectification() {
+    mockCurrentUser();
+    BizProjectRectificationEntity pending = rectification(9001L, "pending");
+    when(rectificationMapper.selectById(9001L)).thenReturn(pending);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
+
+    rectificationService.delete("9001");
+
+    verify(rectificationMapper).deleteById(9001L);
+    verify(rectificationMapper, never()).updateById(any(BizProjectRectificationEntity.class));
+  }
+
+  @Test
+  void deleteRejectsNonPendingRectification() {
+    mockCurrentUser();
+    BizProjectRectificationEntity inProgress = rectification(9001L, "in_progress");
+    when(rectificationMapper.selectById(9001L)).thenReturn(inProgress);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> rectificationService.delete("9001"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("RECTIFICATION_DELETE_STATUS_INVALID");
 
     verify(rectificationMapper, never()).updateById(any(BizProjectRectificationEntity.class));
   }
@@ -331,23 +463,31 @@ class RectificationServiceTests {
   }
 
   private BizProjectMemberEntity member(Long personnelId, String employeeNo, String personnelName) {
+    return member(personnelId, employeeNo, personnelName, "auditor");
+  }
+
+  private BizProjectMemberEntity member(Long personnelId, String employeeNo, String personnelName, String role) {
     BizProjectMemberEntity member = new BizProjectMemberEntity();
     member.setTenantId(1001L);
     member.setProjectId(7001L);
     member.setPersonnelId(personnelId);
     member.setEmployeeNo(employeeNo);
     member.setPersonnelName(personnelName);
-    member.setRole("auditor");
+    member.setRole(role);
     return member;
   }
 
   private void mockCurrentUser() {
+    mockCurrentUser(2001L, "admin", "Platform Administrator");
+  }
+
+  private void mockCurrentUser(Long userId, String account, String username) {
     when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
         "token",
-        2001L,
+        userId,
         1001L,
-        "admin",
-        "Platform Administrator",
+        account,
+        username,
         "IRIS",
         List.of("SUPER_ADMIN")
     ));

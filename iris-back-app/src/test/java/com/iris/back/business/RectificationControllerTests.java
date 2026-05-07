@@ -1,6 +1,8 @@
 package com.iris.back.business;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -179,7 +181,8 @@ class RectificationControllerTests {
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
   void createSubmitAndReviewRoutesReturnRectificationPayload() throws Exception {
     when(rectificationService.create(any())).thenReturn(sampleRectification("pending"));
-    when(rectificationService.createWorkOrder("9001")).thenReturn(sampleRectification("in_progress"));
+    when(rectificationService.createWorkOrder(org.mockito.ArgumentMatchers.eq("9001"), any()))
+        .thenReturn(sampleRectification("in_progress"));
     when(rectificationService.returnWorkOrder(org.mockito.ArgumentMatchers.eq("9001"), any()))
         .thenReturn(sampleRectification("in_progress"));
     when(rectificationService.submit("9001")).thenReturn(sampleRectification("submitted"));
@@ -206,7 +209,17 @@ class RectificationControllerTests {
         .andExpect(jsonPath("$.data.id").value("9001"))
         .andExpect(jsonPath("$.data.status").value("pending"));
 
-    mockMvc.perform(post("/api/v1/rectifications/9001/work-order"))
+    mockMvc.perform(post("/api/v1/rectifications/9001/work-order")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "title": "整改工单标题",
+                  "description": "整改工单描述",
+                  "handlerId": "2002",
+                  "handlerEmployeeNo": "EMP002",
+                  "handlerName": "Auditor"
+                }
+                """))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("in_progress"));
 
@@ -234,6 +247,15 @@ class RectificationControllerTests {
                 """))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.status").value("approved"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void deleteRouteDeletesPendingRectification() throws Exception {
+    mockMvc.perform(delete("/api/v1/rectifications/9001"))
+        .andExpect(status().isOk());
+
+    verify(rectificationService).delete("9001");
   }
 
   private RectificationDto sampleRectification(String status) {

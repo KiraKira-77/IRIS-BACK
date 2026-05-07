@@ -14,6 +14,7 @@ import com.iris.back.business.project.model.request.ProjectWorkOrderReturnReques
 import com.iris.back.business.project.model.request.RectificationCreateRequest;
 import com.iris.back.business.project.model.request.RectificationListQuery;
 import com.iris.back.business.project.model.request.RectificationReviewRequest;
+import com.iris.back.business.project.model.request.RectificationWorkOrderCreateRequest;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.common.model.PageResponse;
 import com.iris.back.common.util.DateTimeFormatters;
@@ -66,7 +67,9 @@ public class RectificationService {
             .orderByDesc(BizProjectRectificationEntity::getUpdatedAt)
             .orderByDesc(BizProjectRectificationEntity::getId)
     )).stream()
+        .filter(entity -> !Objects.equals(entity.getDeleted(), 1))
         .filter(entity -> matches(entity, safeQuery))
+        .filter(entity -> canViewRectification(entity, principal, listProjectMembers(principal.tenantId(), entity.getProjectId())))
         .map(this::toDto)
         .toList();
     long pageNo = normalizedPage(safeQuery.page());
@@ -80,6 +83,7 @@ public class RectificationService {
   public RectificationDto get(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizProjectRectificationEntity entity = requireRectification(parseId(id, "RECTIFICATION_ID_INVALID"), principal.tenantId());
+    ensureCanViewRectification(entity, principal);
     RectificationOmsPayloads payloads = loadRectificationOmsPayloads(entity);
     if (payloads.refreshed()) {
       entity.setUpdatedBy(principal.userId());
@@ -91,6 +95,8 @@ public class RectificationService {
   @Transactional
   public RectificationDto create(RectificationCreateRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long projectId = parseNullableId(request.projectId(), "RECTIFICATION_PROJECT_ID_INVALID");
+    ensureCanCreateProjectRectification(projectId, principal);
     Long id = nextId(new BizProjectRectificationEntity());
     BizProjectRectificationEntity entity = new BizProjectRectificationEntity();
     entity.setId(id);
@@ -98,7 +104,7 @@ public class RectificationService {
     entity.setRectificationCode("RECT-" + id);
     entity.setTitle(normalizeRequiredText(request.title(), "RECTIFICATION_TITLE_REQUIRED"));
     entity.setDescription(trimToNull(request.description()));
-    entity.setProjectId(parseNullableId(request.projectId(), "RECTIFICATION_PROJECT_ID_INVALID"));
+    entity.setProjectId(projectId);
     entity.setProjectName(trimToNull(request.projectName()));
     entity.setTaskId(parseNullableId(request.taskId(), "RECTIFICATION_TASK_ID_INVALID"));
     entity.setChecklistItemId(0L);
@@ -122,6 +128,7 @@ public class RectificationService {
   public RectificationDto submit(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizProjectRectificationEntity entity = requireRectification(parseId(id, "RECTIFICATION_ID_INVALID"), principal.tenantId());
+    ensureCanOperateRectification(entity, principal);
     if (!List.of("pending", "in_progress", "rejected").contains(entity.getStatus())) {
       throw new BusinessException("RECTIFICATION_SUBMIT_STATUS_INVALID", "RECTIFICATION_SUBMIT_STATUS_INVALID");
     }
@@ -132,23 +139,24 @@ public class RectificationService {
   }
 
   @Transactional
-  public RectificationDto createWorkOrder(String id) {
+  public RectificationDto createWorkOrder(String id, RectificationWorkOrderCreateRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizProjectRectificationEntity entity = requireRectification(parseId(id, "RECTIFICATION_ID_INVALID"), principal.tenantId());
+    ensureCanOperateRectification(entity, principal);
     if (!"pending".equals(entity.getStatus())) {
       throw new BusinessException("RECTIFICATION_WORK_ORDER_STATUS_INVALID", "RECTIFICATION_WORK_ORDER_STATUS_INVALID");
     }
     if (trimToNull(entity.getRectificationOmsWorkOrderId()) != null) {
       throw new BusinessException("RECTIFICATION_WORK_ORDER_EXISTS", "RECTIFICATION_WORK_ORDER_EXISTS");
     }
-    BizProjectMemberEntity assignee = requireAssigneeMember(entity, principal.tenantId());
-    String employeeNo = normalizeRequiredText(assignee.getEmployeeNo(), "RECTIFICATION_ASSIGNEE_EMPLOYEE_NO_REQUIRED");
+    BizProjectMemberEntity handler = requireHandlerMember(entity, request, principal.tenantId());
+    String employeeNo = normalizeRequiredText(handler.getEmployeeNo(), "RECTIFICATION_ASSIGNEE_EMPLOYEE_NO_REQUIRED");
     OmsClient.OmsCreateCommand command = new OmsClient.OmsCreateCommand(
-        String.valueOf(entity.getAssigneeId()),
+        String.valueOf(handler.getPersonnelId()),
         employeeNo,
-        entity.getAssigneeName(),
-        normalizeRequiredText(entity.getTitle(), "RECTIFICATION_TITLE_REQUIRED"),
-        trimToNull(entity.getDescription()),
+        normalizeRequiredText(handler.getPersonnelName(), "RECTIFICATION_ASSIGNEE_NAME_REQUIRED"),
+        normalizeRequiredText(request.title(), "RECTIFICATION_TITLE_REQUIRED"),
+        trimToNull(request.description()),
         "rectification:" + entity.getId(),
         entity.getId()
     );
@@ -178,6 +186,7 @@ public class RectificationService {
   public RectificationDto returnWorkOrder(String id, ProjectWorkOrderReturnRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizProjectRectificationEntity entity = requireRectification(parseId(id, "RECTIFICATION_ID_INVALID"), principal.tenantId());
+    ensureCanOperateRectification(entity, principal);
     if (!"in_progress".equals(entity.getStatus())) {
       throw new BusinessException("RECTIFICATION_RETURN_STATUS_INVALID", "RECTIFICATION_RETURN_STATUS_INVALID");
     }
@@ -206,6 +215,7 @@ public class RectificationService {
   public RectificationDto review(String id, RectificationReviewRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizProjectRectificationEntity entity = requireRectification(parseId(id, "RECTIFICATION_ID_INVALID"), principal.tenantId());
+    ensureCanOperateRectification(entity, principal);
     if (!"in_progress".equals(entity.getStatus())) {
       throw new BusinessException("RECTIFICATION_REVIEW_STATUS_INVALID", "RECTIFICATION_REVIEW_STATUS_INVALID");
     }
@@ -225,6 +235,18 @@ public class RectificationService {
     entity.setUpdatedBy(principal.userId());
     rectificationMapper.updateById(entity);
     return toDto(entity);
+  }
+
+  @Transactional
+  public void delete(String id) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizProjectRectificationEntity entity = requireRectification(parseId(id, "RECTIFICATION_ID_INVALID"), principal.tenantId());
+    ensureCanOperateRectification(entity, principal);
+    if (!"pending".equals(entity.getStatus())) {
+      throw new BusinessException("RECTIFICATION_DELETE_STATUS_INVALID", "RECTIFICATION_DELETE_STATUS_INVALID");
+    }
+    // 只有待处理整改单还没有进入整改 OMS 处理链路，可以安全删除；进行中或已审核的整改单必须保留闭环记录。
+    rectificationMapper.deleteById(entity.getId());
   }
 
   private RectificationDto toDto(BizProjectRectificationEntity entity) {
@@ -293,17 +315,108 @@ public class RectificationService {
     return entity;
   }
 
-  private BizProjectMemberEntity requireAssigneeMember(BizProjectRectificationEntity entity, Long tenantId) {
+  private void ensureCanCreateProjectRectification(Long projectId, CurrentUserPrincipal principal) {
+    if (projectId == null) {
+      return;
+    }
+    if (!isCurrentProjectLeader(principal, listProjectMembers(principal.tenantId(), projectId))) {
+      throw new BusinessException("RECTIFICATION_OPERATOR_REQUIRED", "RECTIFICATION_OPERATOR_REQUIRED");
+    }
+  }
+
+  private void ensureCanViewRectification(
+      BizProjectRectificationEntity entity,
+      CurrentUserPrincipal principal
+  ) {
+    if (!canViewRectification(entity, principal, listProjectMembers(principal.tenantId(), entity.getProjectId()))) {
+      throw new BusinessException("RECTIFICATION_FORBIDDEN", "RECTIFICATION_FORBIDDEN");
+    }
+  }
+
+  private void ensureCanOperateRectification(
+      BizProjectRectificationEntity entity,
+      CurrentUserPrincipal principal
+  ) {
+    List<BizProjectMemberEntity> members = listProjectMembers(principal.tenantId(), entity.getProjectId());
+    // 整改单操作权限和项目保持一致：项目负责人可操作；普通项目成员只读；整改单对接人可处理和审核该整改单。
+    if (!isCurrentProjectLeader(principal, members) && !isRectificationAssignee(entity, principal)) {
+      throw new BusinessException("RECTIFICATION_OPERATOR_REQUIRED", "RECTIFICATION_OPERATOR_REQUIRED");
+    }
+  }
+
+  private boolean canViewRectification(
+      BizProjectRectificationEntity entity,
+      CurrentUserPrincipal principal,
+      List<BizProjectMemberEntity> members
+  ) {
+    if (entity.getProjectId() == null) {
+      return Objects.equals(entity.getCreatedBy(), principal.userId())
+          || isRectificationAssignee(entity, principal);
+    }
+    return isCurrentProjectMember(principal, members) || isRectificationAssignee(entity, principal);
+  }
+
+  private List<BizProjectMemberEntity> listProjectMembers(Long tenantId, Long projectId) {
+    if (projectId == null) {
+      return List.of();
+    }
+    return nullToList(projectMemberMapper.selectList(new LambdaQueryWrapper<BizProjectMemberEntity>()
+        .eq(BizProjectMemberEntity::getTenantId, tenantId)
+        .eq(BizProjectMemberEntity::getProjectId, projectId))).stream()
+        .filter(member -> Objects.equals(member.getProjectId(), projectId))
+        .toList();
+  }
+
+  private boolean isCurrentProjectLeader(
+      CurrentUserPrincipal principal,
+      List<BizProjectMemberEntity> members
+  ) {
+    return nullToList(members).stream()
+        .filter(member -> isCurrentPrincipalMember(member, principal))
+        .anyMatch(member -> "leader".equals(member.getRole()));
+  }
+
+  private boolean isCurrentProjectMember(
+      CurrentUserPrincipal principal,
+      List<BizProjectMemberEntity> members
+  ) {
+    return nullToList(members).stream().anyMatch(member -> isCurrentPrincipalMember(member, principal));
+  }
+
+  private boolean isRectificationAssignee(
+      BizProjectRectificationEntity entity,
+      CurrentUserPrincipal principal
+  ) {
+    return Objects.equals(entity.getAssigneeId(), principal.userId())
+        || textEquals(entity.getAssigneeName(), principal.username())
+        || textEquals(entity.getAssigneeName(), principal.account());
+  }
+
+  private boolean isCurrentPrincipalMember(BizProjectMemberEntity member, CurrentUserPrincipal principal) {
+    return Objects.equals(member.getPersonnelId(), principal.userId())
+        || textEquals(member.getEmployeeNo(), principal.account())
+        || textEquals(member.getPersonnelName(), principal.username());
+  }
+
+  private BizProjectMemberEntity requireHandlerMember(
+      BizProjectRectificationEntity entity,
+      RectificationWorkOrderCreateRequest request,
+      Long tenantId
+  ) {
     Long projectId = entity.getProjectId();
-    Long assigneeId = entity.getAssigneeId();
-    if (projectId == null || assigneeId == null) {
+    Long handlerId = parseId(request.handlerId(), "RECTIFICATION_ASSIGNEE_ID_INVALID");
+    if (projectId == null) {
       throw new BusinessException("RECTIFICATION_ASSIGNEE_REQUIRED", "RECTIFICATION_ASSIGNEE_REQUIRED");
     }
     return nullToList(projectMemberMapper.selectList(new LambdaQueryWrapper<BizProjectMemberEntity>()
         .eq(BizProjectMemberEntity::getTenantId, tenantId)
         .eq(BizProjectMemberEntity::getProjectId, projectId)))
         .stream()
-        .filter(member -> Objects.equals(member.getPersonnelId(), assigneeId))
+        .filter(member -> Objects.equals(member.getPersonnelId(), handlerId))
+        .filter(member -> Objects.equals(
+            normalizeRequiredText(member.getEmployeeNo(), "RECTIFICATION_ASSIGNEE_EMPLOYEE_NO_REQUIRED"),
+            normalizeRequiredText(request.handlerEmployeeNo(), "RECTIFICATION_ASSIGNEE_EMPLOYEE_NO_REQUIRED")
+        ))
         .findFirst()
         .orElseThrow(() -> new BusinessException(
             "RECTIFICATION_ASSIGNEE_MEMBER_NOT_FOUND",
@@ -444,6 +557,10 @@ public class RectificationService {
 
   private boolean containsIgnoreCase(String value, String keyword) {
     return value != null && value.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT));
+  }
+
+  private boolean textEquals(String left, String right) {
+    return trimToNull(left) != null && trimToNull(left).equals(trimToNull(right));
   }
 
   private long normalizedPage(Long page) {

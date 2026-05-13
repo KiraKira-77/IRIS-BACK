@@ -16,6 +16,8 @@ import com.iris.back.common.model.PageResponse;
 import com.iris.back.common.util.DateTimeFormatters;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
@@ -24,7 +26,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,17 +38,20 @@ public class ChecklistService {
   private final BizChecklistMapper checklistMapper;
   private final BizChecklistItemMapper checklistItemMapper;
   private final CurrentUserContext currentUserContext;
+  private final SysResourceScopeMemberMapper resourceScopeMemberMapper;
   private final IdentifierGenerator identifierGenerator;
 
   public ChecklistService(
       BizChecklistMapper checklistMapper,
       BizChecklistItemMapper checklistItemMapper,
       CurrentUserContext currentUserContext,
+      SysResourceScopeMemberMapper resourceScopeMemberMapper,
       IdentifierGenerator identifierGenerator
   ) {
     this.checklistMapper = checklistMapper;
     this.checklistItemMapper = checklistItemMapper;
     this.currentUserContext = currentUserContext;
+    this.resourceScopeMemberMapper = resourceScopeMemberMapper;
     this.identifierGenerator = identifierGenerator;
   }
 
@@ -56,11 +63,15 @@ public class ChecklistService {
     List<BizChecklistEntity> entities = checklistMapper.selectList(
         new LambdaQueryWrapper<BizChecklistEntity>()
             .eq(BizChecklistEntity::getTenantId, principal.tenantId())
-            .orderByDesc(BizChecklistEntity::getUpdatedAt)
+        .orderByDesc(BizChecklistEntity::getUpdatedAt)
             .orderByDesc(BizChecklistEntity::getId)
     );
-    Map<Long, List<BizChecklistItemEntity>> itemsByChecklistId = loadItems(principal.tenantId(), entities);
-    List<ChecklistDto> filtered = entities.stream()
+    ChecklistPermissionContext permissionContext = buildPermissionContext(principal);
+    List<BizChecklistEntity> visibleEntities = entities.stream()
+        .filter(entity -> canView(entity, permissionContext))
+        .toList();
+    Map<Long, List<BizChecklistItemEntity>> itemsByChecklistId = loadItems(principal.tenantId(), visibleEntities);
+    List<ChecklistDto> filtered = visibleEntities.stream()
         .map(entity -> toDto(entity, itemsByChecklistId.getOrDefault(entity.getId(), List.of())))
         .filter(item -> matches(item, safeQuery))
         .toList();
@@ -75,12 +86,15 @@ public class ChecklistService {
   public ChecklistDto get(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizChecklistEntity entity = requireChecklist(parseId(id), principal.tenantId());
+    ensureCanView(entity, buildPermissionContext(principal));
     return toDto(entity, listItems(principal.tenantId(), entity.getId()));
   }
 
   @Transactional
   public ChecklistDto create(ChecklistUpsertRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long ownerScopeId = parseId(normalizeRequiredText(request.ownerScopeId(), "CHECKLIST_OWNER_SCOPE_REQUIRED"));
+    ensureCanCreate(ownerScopeId, buildPermissionContext(principal));
     BizChecklistEntity entity = new BizChecklistEntity();
     entity.setId(nextId(entity));
     entity.setTenantId(principal.tenantId());
@@ -98,6 +112,10 @@ public class ChecklistService {
   public ChecklistDto update(String id, ChecklistUpsertRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizChecklistEntity entity = requireChecklist(parseId(id), principal.tenantId());
+    ChecklistPermissionContext permissionContext = buildPermissionContext(principal);
+    Long nextOwnerScopeId = parseId(normalizeRequiredText(request.ownerScopeId(), "CHECKLIST_OWNER_SCOPE_REQUIRED"));
+    ensureCanEdit(entity, permissionContext);
+    ensureOwnerScopeChangeAllowed(entity, nextOwnerScopeId, permissionContext);
     applyFields(entity, request);
     entity.setUpdatedBy(principal.userId());
     checklistMapper.updateById(entity);
@@ -109,6 +127,7 @@ public class ChecklistService {
   public void delete(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizChecklistEntity entity = requireChecklist(parseId(id), principal.tenantId());
+    ensureCanDelete(entity, buildPermissionContext(principal));
     checklistItemMapper.delete(new LambdaQueryWrapper<BizChecklistItemEntity>()
         .eq(BizChecklistItemEntity::getTenantId, principal.tenantId())
         .eq(BizChecklistItemEntity::getChecklistId, entity.getId()));
@@ -208,6 +227,143 @@ public class ChecklistService {
       throw new BusinessException("CHECKLIST_NOT_FOUND", "checklist not found: " + id);
     }
     return entity;
+  }
+
+  private ChecklistPermissionContext buildPermissionContext(CurrentUserPrincipal principal) {
+    if (isSuperAdmin(principal)) {
+      return new ChecklistPermissionContext(true, Map.of());
+    }
+
+    Map<String, ResourceScopeMemberDto> memberships = resourceScopeMemberMapper
+        .selectByTenantIdAndUserId(principal.tenantId(), principal.userId())
+        .stream()
+        .collect(Collectors.toMap(ResourceScopeMemberDto::scopeId, member -> member, (left, right) -> left));
+
+    return new ChecklistPermissionContext(false, memberships);
+  }
+
+  private boolean canView(BizChecklistEntity entity, ChecklistPermissionContext permissionContext) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    if (hasAnyOwnerAccess(entity.getOwnerScopeId(), permissionContext)) {
+      return true;
+    }
+    return splitCsv(entity.getSharedScopeIds()).stream()
+        .anyMatch(scopeId -> hasViewAccess(scopeId, permissionContext));
+  }
+
+  private void ensureCanView(
+      BizChecklistEntity entity,
+      ChecklistPermissionContext permissionContext
+  ) {
+    if (!canView(entity, permissionContext)) {
+      throw new AccessDeniedException("no permission to view checklist");
+    }
+  }
+
+  private void ensureCanCreate(Long ownerScopeId, ChecklistPermissionContext permissionContext) {
+    if (!matchesScopeAction(ownerScopeId, permissionContext, this::hasCreateAccess)) {
+      throw new AccessDeniedException("no permission to create checklist in selected scope");
+    }
+  }
+
+  private void ensureCanEdit(
+      BizChecklistEntity entity,
+      ChecklistPermissionContext permissionContext
+  ) {
+    if (!matchesScopeAction(entity.getOwnerScopeId(), permissionContext, this::hasEditAccess)) {
+      throw new AccessDeniedException("no permission to edit checklist");
+    }
+  }
+
+  private void ensureCanDelete(
+      BizChecklistEntity entity,
+      ChecklistPermissionContext permissionContext
+  ) {
+    if (!matchesScopeAction(entity.getOwnerScopeId(), permissionContext, this::hasDeleteAccess)) {
+      throw new AccessDeniedException("no permission to delete checklist");
+    }
+  }
+
+  private void ensureOwnerScopeChangeAllowed(
+      BizChecklistEntity entity,
+      Long nextOwnerScopeId,
+      ChecklistPermissionContext permissionContext
+  ) {
+    if (Objects.equals(entity.getOwnerScopeId(), nextOwnerScopeId)) {
+      return;
+    }
+    if (!matchesScopeAction(entity.getOwnerScopeId(), permissionContext, this::hasManageAccess)) {
+      throw new AccessDeniedException("no permission to move checklist to another owner scope");
+    }
+    ensureCanCreate(nextOwnerScopeId, permissionContext);
+  }
+
+  private boolean matchesScopeAction(
+      Long scopeId,
+      ChecklistPermissionContext permissionContext,
+      Predicate<ResourceScopeMemberDto> predicate
+  ) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    ResourceScopeMemberDto member = permissionContext.memberships().get(String.valueOf(scopeId));
+    return member != null && predicate.test(member);
+  }
+
+  private boolean hasAnyOwnerAccess(Long scopeId, ChecklistPermissionContext permissionContext) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    ResourceScopeMemberDto member = permissionContext.memberships().get(String.valueOf(scopeId));
+    return member != null && (
+        flag(member.canView()) ||
+        flag(member.canCreate()) ||
+        flag(member.canEdit()) ||
+        flag(member.canDelete()) ||
+        flag(member.canManage())
+    );
+  }
+
+  private boolean hasViewAccess(String scopeId, ChecklistPermissionContext permissionContext) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    ResourceScopeMemberDto member = permissionContext.memberships().get(scopeId);
+    return member != null && (flag(member.canView()) || flag(member.canManage()));
+  }
+
+  private boolean hasCreateAccess(ResourceScopeMemberDto member) {
+    return flag(member.canCreate()) || flag(member.canManage());
+  }
+
+  private boolean hasEditAccess(ResourceScopeMemberDto member) {
+    return flag(member.canEdit()) || flag(member.canManage());
+  }
+
+  private boolean hasDeleteAccess(ResourceScopeMemberDto member) {
+    return flag(member.canDelete()) || flag(member.canManage());
+  }
+
+  private boolean hasManageAccess(ResourceScopeMemberDto member) {
+    return flag(member.canManage());
+  }
+
+  private boolean flag(Integer value) {
+    return Integer.valueOf(1).equals(value);
+  }
+
+  private boolean isSuperAdmin(CurrentUserPrincipal principal) {
+    return principal.roles().stream()
+        .map(String::toUpperCase)
+        .anyMatch(role -> "PLATFORM_ADMIN".equals(role) || "SUPER_ADMIN".equals(role));
+  }
+
+  private record ChecklistPermissionContext(
+      boolean superAdmin,
+      Map<String, ResourceScopeMemberDto> memberships
+  ) {
   }
 
   private ChecklistDto toDto(BizChecklistEntity entity, List<BizChecklistItemEntity> items) {

@@ -1,7 +1,9 @@
 package com.iris.back.business;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,6 +20,8 @@ import com.iris.back.business.checklist.model.request.ChecklistUpsertRequest;
 import com.iris.back.business.checklist.service.ChecklistService;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -27,6 +31,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
 
 @ExtendWith(MockitoExtension.class)
 class ChecklistServiceTests {
@@ -39,6 +44,9 @@ class ChecklistServiceTests {
 
   @Mock
   private CurrentUserContext currentUserContext;
+
+  @Mock
+  private SysResourceScopeMemberMapper resourceScopeMemberMapper;
 
   @Mock
   private IdentifierGenerator identifierGenerator;
@@ -93,6 +101,84 @@ class ChecklistServiceTests {
     assertThat(page.getRecords())
         .extracting(ChecklistDto::id)
         .containsExactly("8802");
+  }
+
+  @Test
+  void listReturnsOnlyChecklistsVisibleToCurrentUserResourceScopes() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    BizChecklistEntity ownerVisible = checklist("8801", "CL-2026-001", "Owner visible checklist");
+    ownerVisible.setOwnerScopeId(9001L);
+    ownerVisible.setStatus("active");
+    BizChecklistEntity sharedVisible = checklist("8802", "CL-2026-002", "Shared visible checklist");
+    sharedVisible.setOwnerScopeId(9008L);
+    sharedVisible.setSharedScopeIds("9002");
+    sharedVisible.setStatus("active");
+    BizChecklistEntity hidden = checklist("8803", "CL-2026-003", "Hidden checklist");
+    hidden.setOwnerScopeId(9010L);
+    hidden.setSharedScopeIds("9011");
+    hidden.setStatus("active");
+    when(checklistMapper.selectList(any())).thenReturn(List.of(ownerVisible, sharedVisible, hidden));
+    when(checklistItemMapper.selectList(any())).thenReturn(List.of());
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0),
+        scopeMember(9002L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    var page = checklistService.list(new ChecklistListQuery(null, null, null, 1L, 10L));
+
+    assertThat(page.getRecords())
+        .extracting(ChecklistDto::id)
+        .containsExactly("8801", "8802");
+  }
+
+  @Test
+  void createRequiresCreatePermissionInOwnerScope() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> checklistService.create(request("9001", List.of())))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("create checklist");
+
+    verify(checklistMapper, never()).insert(any(BizChecklistEntity.class));
+  }
+
+  @Test
+  void updateRequiresEditPermissionInOwnerScope() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    BizChecklistEntity existing = checklist("8801", "CL-2026-001", "Owner visible checklist");
+    existing.setOwnerScopeId(9001L);
+    existing.setStatus("active");
+    when(checklistMapper.selectById(8801L)).thenReturn(existing);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> checklistService.update("8801", request("9001", List.of())))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("edit checklist");
+
+    verify(checklistMapper, never()).updateById(any(BizChecklistEntity.class));
+  }
+
+  @Test
+  void deleteRequiresDeletePermissionInOwnerScope() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    BizChecklistEntity existing = checklist("8801", "CL-2026-001", "Owner visible checklist");
+    existing.setOwnerScopeId(9001L);
+    existing.setStatus("active");
+    when(checklistMapper.selectById(8801L)).thenReturn(existing);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> checklistService.delete("8801"))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("delete checklist");
+
+    verify(checklistMapper, never()).deleteById(any());
   }
 
   @Test
@@ -237,6 +323,44 @@ class ChecklistServiceTests {
     return entity;
   }
 
+  private ChecklistUpsertRequest request(String ownerScopeId, List<String> grantScopeIds) {
+    return new ChecklistUpsertRequest(
+        "CL-2026-001",
+        "Finance checklist",
+        "desc",
+        "V1.0",
+        ownerScopeId,
+        grantScopeIds,
+        "active",
+        "2026-04-27",
+        List.of()
+    );
+  }
+
+  private ResourceScopeMemberDto scopeMember(
+      Long scopeId,
+      Long userId,
+      Integer canView,
+      Integer canCreate,
+      Integer canEdit,
+      Integer canDelete,
+      Integer canManage
+  ) {
+    return new ResourceScopeMemberDto(
+        "1",
+        String.valueOf(scopeId),
+        String.valueOf(userId),
+        "user",
+        "User",
+        canView,
+        canCreate,
+        canEdit,
+        canDelete,
+        canManage,
+        "test"
+    );
+  }
+
   private void mockCurrentUser() {
     when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
         "token",
@@ -246,6 +370,18 @@ class ChecklistServiceTests {
         "Platform Administrator",
         "IRIS",
         List.of("SUPER_ADMIN")
+    ));
+  }
+
+  private void mockCurrentUser(Long userId, List<String> roles) {
+    when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
+        "token",
+        userId,
+        1001L,
+        "user",
+        "User",
+        "IRIS",
+        roles
     ));
   }
 }

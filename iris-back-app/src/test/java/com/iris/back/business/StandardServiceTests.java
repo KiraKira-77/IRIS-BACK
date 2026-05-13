@@ -170,6 +170,7 @@ class StandardServiceTests {
     first.setVisibilityLevel("SCOPED");
     first.setOwnerScopeId(9001L);
     first.setUpdatedBy(2004L);
+    first.setCreatedAt(LocalDateTime.of(2026, 4, 20, 9, 0));
 
     BizStandardEntity second = standard(9902L, "group-2", "STD-FIN-002", "V1.0", 1, null);
     second.setTitle("Finance Review");
@@ -178,6 +179,7 @@ class StandardServiceTests {
     second.setVisibilityLevel("SCOPED");
     second.setOwnerScopeId(9001L);
     second.setUpdatedBy(2004L);
+    second.setCreatedAt(LocalDateTime.of(2026, 4, 23, 9, 0));
 
     BizStandardEntity hiddenByKeyword = standard(9903L, "group-3", "STD-IT-001", "V1.0", 1, null);
     hiddenByKeyword.setTitle("IT Baseline");
@@ -198,7 +200,7 @@ class StandardServiceTests {
     assertThat(page.getTotal()).isEqualTo(2);
     assertThat(page.getPageNo()).isEqualTo(2);
     assertThat(page.getPageSize()).isEqualTo(1);
-    assertThat(page.getRecords()).extracting(item -> item.id()).containsExactly("9902");
+    assertThat(page.getRecords()).extracting(item -> item.id()).containsExactly("9901");
   }
 
   @Test
@@ -229,6 +231,64 @@ class StandardServiceTests {
       assertThat(item.version()).isEqualTo("V2.0");
       assertThat(item.versionCount()).isEqualTo(2);
     });
+  }
+
+  @Test
+  void listQueryDefaultsToUploadDateDescendingBeforePaging() {
+    mockCurrentUser(2001L, List.of("SUPER_ADMIN"));
+
+    BizStandardEntity older = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    older.setTitle("Older Standard");
+    older.setCategory("internal");
+    older.setStatus("active");
+    older.setVisibilityLevel("PUBLIC");
+    older.setCreatedAt(LocalDateTime.of(2026, 4, 20, 9, 0));
+
+    BizStandardEntity newer = standard(9902L, "group-2", "STD-FIN-002", "V1.0", 1, null);
+    newer.setTitle("Newer Standard");
+    newer.setCategory("internal");
+    newer.setStatus("active");
+    newer.setVisibilityLevel("PUBLIC");
+    newer.setCreatedAt(LocalDateTime.of(2026, 4, 23, 9, 0));
+
+    when(standardMapper.selectList(any())).thenReturn(List.of(older, newer));
+
+    var page = standardService.list(new StandardListQuery(null, null, null, 1L, 10L));
+
+    assertThat(page.getRecords()).extracting(item -> item.id()).containsExactly("9902", "9901");
+  }
+
+  @Test
+  void listQueryCanSortByUploadDateAscendingBeforePaging() {
+    mockCurrentUser(2001L, List.of("SUPER_ADMIN"));
+
+    BizStandardEntity older = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
+    older.setTitle("Older Standard");
+    older.setCategory("internal");
+    older.setStatus("active");
+    older.setVisibilityLevel("PUBLIC");
+    older.setCreatedAt(LocalDateTime.of(2026, 4, 20, 9, 0));
+
+    BizStandardEntity newer = standard(9902L, "group-2", "STD-FIN-002", "V1.0", 1, null);
+    newer.setTitle("Newer Standard");
+    newer.setCategory("internal");
+    newer.setStatus("active");
+    newer.setVisibilityLevel("PUBLIC");
+    newer.setCreatedAt(LocalDateTime.of(2026, 4, 23, 9, 0));
+
+    when(standardMapper.selectList(any())).thenReturn(List.of(newer, older));
+
+    var page = standardService.list(new StandardListQuery(
+        null,
+        null,
+        null,
+        1L,
+        10L,
+        "uploadDate",
+        "asc"
+    ));
+
+    assertThat(page.getRecords()).extracting(item -> item.id()).containsExactly("9901", "9902");
   }
 
   @Test

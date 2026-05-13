@@ -82,6 +82,7 @@ public class StandardService {
     if (normalizeFilterText(safeQuery.status()) == null) {
       filtered = pickLatestVersionDtos(filtered);
     }
+    filtered = sortList(filtered, safeQuery);
 
     long pageNo = safeQuery.normalizedPage();
     long pageSize = safeQuery.normalizedPageSize();
@@ -142,6 +143,57 @@ public class StandardService {
       }
     }
     return List.copyOf(latestByGroup.values());
+  }
+
+  private List<StandardDto> sortList(List<StandardDto> standards, StandardListQuery query) {
+    if (!"uploadDate".equalsIgnoreCase(query.normalizedSortBy())) {
+      return standards;
+    }
+
+    Comparator<StandardDto> comparator = query.sortAscending()
+        ? this::compareUploadDateAscending
+        : this::compareUploadDateDescending;
+
+    return standards.stream()
+        .sorted(comparator)
+        .toList();
+  }
+
+  private int compareUploadDateAscending(StandardDto left, StandardDto right) {
+    int dateCompare = compareNullableDateText(uploadDateSortValue(left), uploadDateSortValue(right));
+    if (dateCompare != 0) {
+      return dateCompare;
+    }
+    return Long.compare(parseId(left.id()), parseId(right.id()));
+  }
+
+  private int compareUploadDateDescending(StandardDto left, StandardDto right) {
+    int dateCompare = compareNullableDateText(uploadDateSortValue(right), uploadDateSortValue(left));
+    if (dateCompare != 0) {
+      return dateCompare;
+    }
+    return Long.compare(parseId(right.id()), parseId(left.id()));
+  }
+
+  private int compareNullableDateText(String left, String right) {
+    if (left == null && right == null) {
+      return 0;
+    }
+    if (left == null) {
+      return 1;
+    }
+    if (right == null) {
+      return -1;
+    }
+    return left.compareTo(right);
+  }
+
+  private String uploadDateSortValue(StandardDto item) {
+    String createdAt = normalizeFilterText(item.createdAt());
+    if (createdAt != null) {
+      return createdAt;
+    }
+    return normalizeFilterText(item.publishDate());
   }
 
   private int compareVersionOrder(StandardDto left, StandardDto right) {

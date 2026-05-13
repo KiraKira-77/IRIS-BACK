@@ -40,14 +40,18 @@ public class StandardController {
       @RequestParam(required = false) String category,
       @RequestParam(required = false) String status,
       @RequestParam(required = false, defaultValue = "1") Long page,
-      @RequestParam(required = false, defaultValue = "10") Long pageSize
+      @RequestParam(required = false, defaultValue = "10") Long pageSize,
+      @RequestParam(required = false) String sortBy,
+      @RequestParam(required = false) String sortOrder
   ) {
     return ApiResponse.success(standardService.list(new StandardListQuery(
         keyword,
         category,
         status,
         page,
-        pageSize
+        pageSize,
+        sortBy,
+        sortOrder
     )));
   }
 

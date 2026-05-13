@@ -15,12 +15,16 @@ import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
+import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysResourceScopeMemberEntity;
+import com.iris.back.system.model.entity.SysUserEntity;
 import com.iris.back.system.model.request.ResourceScopeMemberReplaceRequest;
 import com.iris.back.system.model.request.ResourceScopeMemberUpsertRequest;
 import com.iris.back.system.model.request.ResourceScopeUpsertRequest;
+import com.iris.back.system.model.request.UserResourceScopeMembershipReplaceRequest;
+import com.iris.back.system.model.request.UserResourceScopeMembershipUpsertRequest;
 import com.iris.back.system.service.ResourceScopeService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -41,6 +45,9 @@ class ResourceScopeServiceTests {
 
   @Mock
   private SysResourceScopeUsageMapper resourceScopeUsageMapper;
+
+  @Mock
+  private SysUserMapper userMapper;
 
   @Mock
   private IdentifierGenerator identifierGenerator;
@@ -195,6 +202,78 @@ class ResourceScopeServiceTests {
   }
 
   @Test
+  void listUserMembershipsUsesRequestedUserTenant() {
+    SysUserEntity user = user(2002L, 1001L);
+    when(userMapper.selectById(2002L)).thenReturn(user);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        new ResourceScopeMemberDto(
+            "9104",
+            "9001",
+            "2002",
+            "auditor",
+            "Auditor",
+            1,
+            1,
+            0,
+            0,
+            0,
+            "finance member"
+        )
+    ));
+
+    var memberships = resourceScopeService.listUserMemberships(2002L);
+
+    assertThat(memberships).hasSize(1);
+    assertThat(memberships.getFirst().scopeId()).isEqualTo("9001");
+    verify(resourceScopeMemberMapper).selectByTenantIdAndUserId(1001L, 2002L);
+  }
+
+  @Test
+  void replaceUserMembershipsRewritesRequestedUserScopes() {
+    SysUserEntity user = user(2002L, 1001L);
+    when(userMapper.selectById(2002L)).thenReturn(user);
+    when(resourceScopeMapper.selectById(9101L)).thenReturn(scope(9101L, 1001L, "FINANCE"));
+    when(resourceScopeMapper.selectById(9102L)).thenReturn(scope(9102L, 1001L, "IT"));
+    when(identifierGenerator.nextId(any()))
+        .thenReturn(9201001L)
+        .thenReturn(9201002L);
+
+    resourceScopeService.replaceUserMemberships(2002L, new UserResourceScopeMembershipReplaceRequest(List.of(
+        new UserResourceScopeMembershipUpsertRequest(9101L, true, true, false, false, false, "creator"),
+        new UserResourceScopeMembershipUpsertRequest(9102L, true, true, true, true, true, "manager")
+    )));
+
+    ArgumentCaptor<List<SysResourceScopeMemberEntity>> captor = ArgumentCaptor.forClass(List.class);
+    verify(resourceScopeMemberMapper).replaceForUser(eq(1001L), eq(2002L), captor.capture());
+
+    assertThat(captor.getValue()).hasSize(2);
+    assertThat(captor.getValue()).extracting(SysResourceScopeMemberEntity::getScopeId)
+        .containsExactly(9101L, 9102L);
+    assertThat(captor.getValue()).extracting(SysResourceScopeMemberEntity::getUserId)
+        .containsOnly(2002L);
+    assertThat(captor.getValue().getLast().getCanManage()).isEqualTo(1);
+  }
+
+  @Test
+  void replaceUserMembershipsRejectsScopeFromAnotherTenant() {
+    SysUserEntity user = user(2002L, 1001L);
+    when(userMapper.selectById(2002L)).thenReturn(user);
+    when(resourceScopeMapper.selectById(9101L)).thenReturn(scope(9101L, 1002L, "FINANCE"));
+
+    assertThatThrownBy(() -> resourceScopeService.replaceUserMemberships(
+        2002L,
+        new UserResourceScopeMembershipReplaceRequest(List.of(
+            new UserResourceScopeMembershipUpsertRequest(9101L, true, false, false, false, false, "")
+        ))
+    ))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("RESOURCE_SCOPE_TENANT_MISMATCH");
+
+    verify(resourceScopeMemberMapper, never()).replaceForUser(any(), any(), any());
+  }
+
+  @Test
   void deleteRemovesUnusedScopeAndMembers() {
     SysResourceScopeEntity scope = new SysResourceScopeEntity();
     scope.setId(9101L);
@@ -238,6 +317,16 @@ class ResourceScopeServiceTests {
     entity.setId(id);
     entity.setTenantId(tenantId);
     entity.setScopeCode(scopeCode);
+    return entity;
+  }
+
+  private SysUserEntity user(Long id, Long tenantId) {
+    SysUserEntity entity = new SysUserEntity();
+    entity.setId(id);
+    entity.setTenantId(tenantId);
+    entity.setAccount("auditor");
+    entity.setUsername("Auditor");
+    entity.setStatus(1);
     return entity;
   }
 }

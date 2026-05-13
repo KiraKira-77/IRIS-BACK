@@ -2,6 +2,7 @@ package com.iris.back.system;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -278,6 +279,73 @@ class SystemControllerTests {
         .andExpect(jsonPath("$.success").value(true))
         .andExpect(jsonPath("$.data[0].scopeId").value("9001"))
         .andExpect(jsonPath("$.data[0].canCreate").value(1));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void listUserResourceScopeMembershipsReturnsRequestedUserPermissions() throws Exception {
+    SysUserEntity user = new SysUserEntity();
+    user.setId(2002L);
+    user.setTenantId(1001L);
+    user.setAccount("auditor");
+    user.setUsername("Auditor");
+    user.setStatus(1);
+    when(userMapper.selectById(2002L)).thenReturn(user);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        new ResourceScopeMemberDto(
+            "9104",
+            "9001",
+            "2002",
+            "auditor",
+            "Auditor",
+            1,
+            0,
+            1,
+            0,
+            0,
+            "finance member"
+        )
+    ));
+
+    mockMvc.perform(get("/api/v1/system/users/2002/resource-scope-memberships"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.data[0].scopeId").value("9001"))
+        .andExpect(jsonPath("$.data[0].canEdit").value(1));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void replaceUserResourceScopeMembershipsReturnsSuccess() throws Exception {
+    SysUserEntity user = new SysUserEntity();
+    user.setId(2002L);
+    user.setTenantId(1001L);
+    user.setAccount("auditor");
+    user.setUsername("Auditor");
+    user.setStatus(1);
+    when(userMapper.selectById(2002L)).thenReturn(user);
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L, "FINANCE"));
+
+    mockMvc.perform(put("/api/v1/system/users/2002/resource-scope-memberships")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {
+                  "memberships": [
+                    {
+                      "scopeId": 9001,
+                      "canView": true,
+                      "canCreate": true,
+                      "canEdit": false,
+                      "canDelete": false,
+                      "canManage": false,
+                      "remark": "finance creator"
+                    }
+                  ]
+                }
+                """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.message").value("user resource scope memberships updated"));
   }
 
   @Test

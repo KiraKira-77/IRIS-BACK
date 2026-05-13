@@ -1,8 +1,11 @@
 package com.iris.back.system.controller;
 
 import com.iris.back.common.model.ApiResponse;
+import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.dto.UserDto;
+import com.iris.back.system.model.request.UserResourceScopeMembershipReplaceRequest;
 import com.iris.back.system.model.request.UserUpsertRequest;
+import com.iris.back.system.service.ResourceScopeService;
 import com.iris.back.system.service.UserService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -20,9 +23,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController {
 
   private final UserService userService;
+  private final ResourceScopeService resourceScopeService;
 
-  public UserController(UserService userService) {
+  public UserController(UserService userService, ResourceScopeService resourceScopeService) {
     this.userService = userService;
+    this.resourceScopeService = resourceScopeService;
   }
 
   @GetMapping
@@ -44,6 +49,20 @@ public class UserController {
   public ApiResponse<Void> resetPassword(@PathVariable Long id) {
     userService.resetPassword(id);
     return ApiResponse.success("password reset", null);
+  }
+
+  @GetMapping("/{id}/resource-scope-memberships")
+  public ApiResponse<List<ResourceScopeMemberDto>> listResourceScopeMemberships(@PathVariable Long id) {
+    return ApiResponse.success(resourceScopeService.listUserMemberships(id));
+  }
+
+  @PutMapping("/{id}/resource-scope-memberships")
+  public ApiResponse<Void> replaceResourceScopeMemberships(
+      @PathVariable Long id,
+      @Valid @RequestBody UserResourceScopeMembershipReplaceRequest request
+  ) {
+    resourceScopeService.replaceUserMemberships(id, request);
+    return ApiResponse.success("user resource scope memberships updated", null);
   }
 
   @PutMapping("/{id}")

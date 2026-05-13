@@ -7,13 +7,17 @@ import com.iris.back.framework.security.CurrentUserPrincipal;
 import com.iris.back.system.mapper.SysResourceScopeMapper;
 import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
 import com.iris.back.system.mapper.SysResourceScopeUsageMapper;
+import com.iris.back.system.mapper.SysUserMapper;
 import com.iris.back.system.model.dto.ResourceScopeDto;
 import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import com.iris.back.system.model.entity.SysResourceScopeEntity;
 import com.iris.back.system.model.entity.SysResourceScopeMemberEntity;
+import com.iris.back.system.model.entity.SysUserEntity;
 import com.iris.back.system.model.request.ResourceScopeMemberReplaceRequest;
 import com.iris.back.system.model.request.ResourceScopeMemberUpsertRequest;
 import com.iris.back.system.model.request.ResourceScopeUpsertRequest;
+import com.iris.back.system.model.request.UserResourceScopeMembershipReplaceRequest;
+import com.iris.back.system.model.request.UserResourceScopeMembershipUpsertRequest;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +34,7 @@ public class ResourceScopeService {
   private final SysResourceScopeMapper resourceScopeMapper;
   private final SysResourceScopeMemberMapper resourceScopeMemberMapper;
   private final SysResourceScopeUsageMapper resourceScopeUsageMapper;
+  private final SysUserMapper userMapper;
   private final CurrentUserContext currentUserContext;
   private final IdentifierGenerator identifierGenerator;
 
@@ -37,12 +42,14 @@ public class ResourceScopeService {
       SysResourceScopeMapper resourceScopeMapper,
       SysResourceScopeMemberMapper resourceScopeMemberMapper,
       SysResourceScopeUsageMapper resourceScopeUsageMapper,
+      SysUserMapper userMapper,
       CurrentUserContext currentUserContext,
       IdentifierGenerator identifierGenerator
   ) {
     this.resourceScopeMapper = resourceScopeMapper;
     this.resourceScopeMemberMapper = resourceScopeMemberMapper;
     this.resourceScopeUsageMapper = resourceScopeUsageMapper;
+    this.userMapper = userMapper;
     this.currentUserContext = currentUserContext;
     this.identifierGenerator = identifierGenerator;
   }
@@ -88,12 +95,25 @@ public class ResourceScopeService {
     return resourceScopeMemberMapper.selectByTenantIdAndUserId(principal.tenantId(), principal.userId());
   }
 
+  public List<ResourceScopeMemberDto> listUserMemberships(Long userId) {
+    SysUserEntity user = requireUser(userId);
+    return resourceScopeMemberMapper.selectByTenantIdAndUserId(user.getTenantId(), user.getId());
+  }
+
   public void replaceMembers(Long scopeId, ResourceScopeMemberReplaceRequest request) {
     SysResourceScopeEntity scope = requireScope(scopeId);
     List<SysResourceScopeMemberEntity> members = normalizeMembers(request.members()).stream()
         .map(member -> toMemberEntity(scope, member))
         .toList();
     resourceScopeMemberMapper.replaceForScope(scopeId, members);
+  }
+
+  public void replaceUserMemberships(Long userId, UserResourceScopeMembershipReplaceRequest request) {
+    SysUserEntity user = requireUser(userId);
+    List<SysResourceScopeMemberEntity> members = normalizeUserMemberships(request.memberships()).stream()
+        .map(membership -> toUserMembershipEntity(user, membership))
+        .toList();
+    resourceScopeMemberMapper.replaceForUser(user.getTenantId(), user.getId(), members);
   }
 
   public void delete(Long id) {
@@ -106,6 +126,16 @@ public class ResourceScopeService {
     LinkedHashMap<Long, ResourceScopeMemberUpsertRequest> deduplicated = new LinkedHashMap<>();
     for (ResourceScopeMemberUpsertRequest member : members) {
       deduplicated.put(member.userId(), member);
+    }
+    return List.copyOf(deduplicated.values());
+  }
+
+  private List<UserResourceScopeMembershipUpsertRequest> normalizeUserMemberships(
+      List<UserResourceScopeMembershipUpsertRequest> memberships
+  ) {
+    LinkedHashMap<Long, UserResourceScopeMembershipUpsertRequest> deduplicated = new LinkedHashMap<>();
+    for (UserResourceScopeMembershipUpsertRequest membership : memberships) {
+      deduplicated.put(membership.scopeId(), membership);
     }
     return List.copyOf(deduplicated.values());
   }
@@ -175,6 +205,22 @@ public class ResourceScopeService {
     return entity;
   }
 
+  private SysResourceScopeEntity requireScopeForTenant(Long id, Long tenantId) {
+    SysResourceScopeEntity entity = requireScope(id);
+    if (!tenantId.equals(entity.getTenantId())) {
+      throw new BusinessException("RESOURCE_SCOPE_TENANT_MISMATCH", "resource scope tenant mismatch: " + id);
+    }
+    return entity;
+  }
+
+  private SysUserEntity requireUser(Long id) {
+    SysUserEntity entity = userMapper.selectById(id);
+    if (entity == null) {
+      throw new BusinessException("USER_NOT_FOUND", "user not found: " + id);
+    }
+    return entity;
+  }
+
   private void requireScopeDeletable(Long id) {
     requireScope(id);
     long ownerReferences = resourceScopeUsageMapper.countOwnerReferences(id);
@@ -193,6 +239,29 @@ public class ResourceScopeService {
     entity.setTenantId(scope.getTenantId());
     entity.setScopeId(scope.getId());
     entity.setUserId(request.userId());
+    entity.setCanView(flag(request.canView()));
+    entity.setCanCreate(flag(request.canCreate()));
+    entity.setCanEdit(flag(request.canEdit()));
+    entity.setCanDelete(flag(request.canDelete()));
+    entity.setCanManage(flag(request.canManage()));
+    entity.setRemark(request.remark());
+    entity.setDeleted(0);
+    entity.setVersion(0L);
+    entity.setCreatedBy(SYSTEM_USER_ID);
+    entity.setUpdatedBy(SYSTEM_USER_ID);
+    return entity;
+  }
+
+  private SysResourceScopeMemberEntity toUserMembershipEntity(
+      SysUserEntity user,
+      UserResourceScopeMembershipUpsertRequest request
+  ) {
+    SysResourceScopeEntity scope = requireScopeForTenant(request.scopeId(), user.getTenantId());
+    SysResourceScopeMemberEntity entity = new SysResourceScopeMemberEntity();
+    entity.setId(nextId(entity));
+    entity.setTenantId(user.getTenantId());
+    entity.setScopeId(scope.getId());
+    entity.setUserId(user.getId());
     entity.setCanView(flag(request.canView()));
     entity.setCanCreate(flag(request.canCreate()));
     entity.setCanEdit(flag(request.canEdit()));

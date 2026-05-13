@@ -62,8 +62,23 @@ public interface SysResourceScopeMemberMapper extends BaseMapper<SysResourceScop
       """)
   int deleteByScopeIdHard(@Param("scopeId") Long scopeId);
 
+  @Delete("""
+      DELETE FROM sys_resource_scope_member
+      WHERE tenant_id = #{tenantId}
+        AND user_id = #{userId}
+      """)
+  int deleteByTenantIdAndUserIdHard(
+      @Param("tenantId") Long tenantId,
+      @Param("userId") Long userId
+  );
+
   default void replaceForScope(Long scopeId, List<SysResourceScopeMemberEntity> entities) {
     deleteByScopeIdHard(scopeId);
+    entities.forEach(this::insert);
+  }
+
+  default void replaceForUser(Long tenantId, Long userId, List<SysResourceScopeMemberEntity> entities) {
+    deleteByTenantIdAndUserIdHard(tenantId, userId);
     entities.forEach(this::insert);
   }
 }

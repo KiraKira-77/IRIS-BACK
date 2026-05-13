@@ -78,6 +78,16 @@ public class StandardController {
     return ApiResponse.success("standard published", standardService.publish(id));
   }
 
+  @PostMapping("/{id}/disable")
+  public ApiResponse<StandardDto> disable(@PathVariable String id) {
+    return ApiResponse.success("standard disabled", standardService.disable(id));
+  }
+
+  @PostMapping("/{id}/enable")
+  public ApiResponse<StandardDto> enable(@PathVariable String id) {
+    return ApiResponse.success("standard enabled", standardService.enable(id));
+  }
+
   @PostMapping("/{id}/rollback")
   public ApiResponse<StandardDto> rollback(
       @PathVariable String id,

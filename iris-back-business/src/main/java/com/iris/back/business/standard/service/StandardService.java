@@ -263,6 +263,7 @@ public class StandardService {
     StandardPermissionContext permissionContext = buildPermissionContext(principal);
     ensureCanEdit(source, permissionContext);
     ensureCanCreate(source.getOwnerScopeId(), permissionContext);
+    ensureActiveUpgradeOnly(source);
 
     List<BizStandardEntity> versions = listGroupStandards(principal.tenantId(), source.getStandardGroupId());
     ensureUpgradeSourceIsLatest(source, versions);
@@ -386,7 +387,43 @@ public class StandardService {
     entity.setStandardGroupId(request.standardGroupId() == null || request.standardGroupId().isBlank()
         ? entity.getStandardGroupId()
         : request.standardGroupId());
+    boolean activatingStandard = !"active".equalsIgnoreCase(entity.getStatus())
+        && "active".equalsIgnoreCase(request.status());
     applyFields(entity, request, ownerScopeId);
+    if (activatingStandard) {
+      archiveOtherActiveVersions(entity, principal);
+    }
+    entity.setUpdatedBy(principal.userId());
+    standardMapper.updateById(entity);
+    return toDto(
+        entity,
+        loadOperatorNames(List.of(entity)),
+        fileService.listByBizId(principal.tenantId(), BIZ_TYPE_STANDARD, entity.getId())
+    );
+  }
+
+  public StandardDto disable(String id) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
+    ensureCanEdit(entity, buildPermissionContext(principal));
+    ensureActiveDisableOnly(entity);
+    entity.setStatus("disabled");
+    entity.setUpdatedBy(principal.userId());
+    standardMapper.updateById(entity);
+    return toDto(
+        entity,
+        loadOperatorNames(List.of(entity)),
+        fileService.listByBizId(principal.tenantId(), BIZ_TYPE_STANDARD, entity.getId())
+    );
+  }
+
+  public StandardDto enable(String id) {
+    CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    BizStandardEntity entity = requireStandard(parseId(id), principal.tenantId());
+    ensureCanEdit(entity, buildPermissionContext(principal));
+    ensureDisabledEnableOnly(entity);
+    archiveOtherActiveVersions(entity, principal);
+    entity.setStatus("active");
     entity.setUpdatedBy(principal.userId());
     standardMapper.updateById(entity);
     return toDto(
@@ -446,6 +483,16 @@ public class StandardService {
     return standardMapper.selectList(new LambdaQueryWrapper<BizStandardEntity>()
         .eq(BizStandardEntity::getTenantId, tenantId)
         .eq(BizStandardEntity::getStandardGroupId, standardGroupId));
+  }
+
+  private void archiveOtherActiveVersions(BizStandardEntity current, CurrentUserPrincipal principal) {
+    for (BizStandardEntity version : listGroupStandards(principal.tenantId(), current.getStandardGroupId())) {
+      if (!Objects.equals(version.getId(), current.getId()) && "active".equalsIgnoreCase(version.getStatus())) {
+        version.setStatus("archived");
+        version.setUpdatedBy(principal.userId());
+        standardMapper.updateById(version);
+      }
+    }
   }
 
   private void ensureUpgradeSourceIsLatest(BizStandardEntity source, List<BizStandardEntity> versions) {
@@ -739,6 +786,33 @@ public class StandardService {
       throw new BusinessException(
           "STANDARD_PUBLISH_ONLY_DRAFT",
           "only draft standard can be published: " + entity.getId()
+      );
+    }
+  }
+
+  private void ensureActiveUpgradeOnly(BizStandardEntity entity) {
+    if (!"active".equalsIgnoreCase(entity.getStatus())) {
+      throw new BusinessException(
+          "STANDARD_UPGRADE_ONLY_ACTIVE",
+          "only active standard can be upgraded: " + entity.getId()
+      );
+    }
+  }
+
+  private void ensureActiveDisableOnly(BizStandardEntity entity) {
+    if (!"active".equalsIgnoreCase(entity.getStatus())) {
+      throw new BusinessException(
+          "STANDARD_DISABLE_ONLY_ACTIVE",
+          "only active standard can be disabled: " + entity.getId()
+      );
+    }
+  }
+
+  private void ensureDisabledEnableOnly(BizStandardEntity entity) {
+    if (!"disabled".equalsIgnoreCase(entity.getStatus())) {
+      throw new BusinessException(
+          "STANDARD_ENABLE_ONLY_DISABLED",
+          "only disabled standard can be enabled: " + entity.getId()
       );
     }
   }

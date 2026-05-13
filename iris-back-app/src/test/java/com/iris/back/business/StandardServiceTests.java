@@ -699,6 +699,63 @@ class StandardServiceTests {
   }
 
   @Test
+  void updatePublishingDraftArchivesExistingActiveVersion() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity active = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    active.setTitle("Finance Standard");
+    active.setCategory("internal");
+    active.setStatus("active");
+    active.setPublishDate(LocalDate.of(2026, 4, 20));
+    active.setVisibilityLevel("SCOPED");
+    active.setOwnerScopeId(9001L);
+
+    BizStandardEntity draft = standard(9903L, "group-1", "STD-FIN-001", "V3.0", 3, 9902L);
+    draft.setTitle("Finance Standard");
+    draft.setCategory("internal");
+    draft.setStatus("draft");
+    draft.setVisibilityLevel("SCOPED");
+    draft.setOwnerScopeId(9001L);
+
+    when(standardMapper.selectById(9903L)).thenReturn(draft);
+    when(standardMapper.selectList(any())).thenReturn(List.of(active, draft));
+    when(resourceScopeMapper.selectById(9001L)).thenReturn(scope(9001L, 1001L));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+
+    var published = standardService.update("9903", new StandardUpsertRequest(
+        1001L,
+        "Finance Standard",
+        "internal",
+        "V3.0",
+        "active",
+        LocalDate.now().toString(),
+        "standard description",
+        "STD-FIN-001",
+        "group-1",
+        3,
+        "9902",
+        "SCOPED",
+        "9001",
+        List.of(),
+        "upgrade draft"
+    ));
+
+    ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
+    verify(standardMapper, times(2)).updateById(captor.capture());
+
+    assertThat(published.status()).isEqualTo("active");
+    assertThat(captor.getAllValues()).anySatisfy(entity -> {
+      assertThat(entity.getId()).isEqualTo(9902L);
+      assertThat(entity.getStatus()).isEqualTo("archived");
+    });
+    assertThat(captor.getAllValues()).anySatisfy(entity -> {
+      assertThat(entity.getId()).isEqualTo(9903L);
+      assertThat(entity.getStatus()).isEqualTo("active");
+    });
+  }
+
+  @Test
   void rollbackCreatesDraftFromHistoricalVersionAndCopiesAttachments() {
     mockCurrentUser(2002L, List.of("AUDITOR"));
     BizStandardEntity archived = standard(9901L, "group-1", "STD-FIN-001", "V1.0", 1, null);
@@ -782,15 +839,14 @@ class StandardServiceTests {
     source.setTenantId(1001L);
     source.setTitle("Finance Standard");
     source.setCategory("internal");
-    source.setStatus("archived");
+    source.setStatus("active");
     source.setDescription("standard description");
     source.setVisibilityLevel("SCOPED");
     source.setOwnerScopeId(9001L);
+    BizStandardEntity latestDraft = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    latestDraft.setStatus("draft");
     when(standardMapper.selectById(9901L)).thenReturn(source);
-    when(standardMapper.selectList(any())).thenReturn(List.of(
-        source,
-        standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L)
-    ));
+    when(standardMapper.selectList(any())).thenReturn(List.of(source, latestDraft));
     when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
         scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
     ));
@@ -828,6 +884,91 @@ class StandardServiceTests {
         .isInstanceOf(BusinessException.class)
         .extracting("code")
         .isEqualTo("STANDARD_VERSION_DUPLICATE");
+
+    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+  }
+
+  @Test
+  void disableActiveStandardChangesStatusWithoutCreatingVersion() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity active = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    active.setTitle("Finance Standard");
+    active.setCategory("internal");
+    active.setStatus("active");
+    active.setPublishDate(LocalDate.of(2026, 4, 20));
+    active.setVisibilityLevel("SCOPED");
+    active.setOwnerScopeId(9001L);
+    when(standardMapper.selectById(9902L)).thenReturn(active);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 0, 1, 0, 0)
+    ));
+
+    var disabled = standardService.disable("9902");
+
+    ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
+    verify(standardMapper).updateById(captor.capture());
+    verify(standardMapper, never()).insert(any(BizStandardEntity.class));
+    assertThat(disabled.status()).isEqualTo("disabled");
+    assertThat(captor.getValue().getStatus()).isEqualTo("disabled");
+    assertThat(captor.getValue().getVersionNumber()).isEqualTo(2);
+  }
+
+  @Test
+  void enableDisabledStandardArchivesAnyOtherActiveVersion() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity disabled = standard(9903L, "group-1", "STD-FIN-001", "V3.0", 3, 9902L);
+    disabled.setTitle("Finance Standard");
+    disabled.setCategory("internal");
+    disabled.setStatus("disabled");
+    disabled.setVisibilityLevel("SCOPED");
+    disabled.setOwnerScopeId(9001L);
+
+    BizStandardEntity active = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    active.setStatus("active");
+    active.setVisibilityLevel("SCOPED");
+    active.setOwnerScopeId(9001L);
+
+    when(standardMapper.selectById(9903L)).thenReturn(disabled);
+    when(standardMapper.selectList(any())).thenReturn(List.of(active, disabled));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 0, 1, 0, 0)
+    ));
+
+    var enabled = standardService.enable("9903");
+
+    ArgumentCaptor<BizStandardEntity> captor = ArgumentCaptor.forClass(BizStandardEntity.class);
+    verify(standardMapper, times(2)).updateById(captor.capture());
+    assertThat(enabled.status()).isEqualTo("active");
+    assertThat(captor.getAllValues()).anySatisfy(entity -> {
+      assertThat(entity.getId()).isEqualTo(9902L);
+      assertThat(entity.getStatus()).isEqualTo("archived");
+    });
+    assertThat(captor.getAllValues()).anySatisfy(entity -> {
+      assertThat(entity.getId()).isEqualTo(9903L);
+      assertThat(entity.getStatus()).isEqualTo("active");
+    });
+  }
+
+  @Test
+  void upgradeRejectsDisabledStandard() {
+    mockCurrentUser(2002L, List.of("AUDITOR"));
+    BizStandardEntity source = standard(9902L, "group-1", "STD-FIN-001", "V2.0", 2, 9901L);
+    source.setTenantId(1001L);
+    source.setTitle("Finance Standard");
+    source.setCategory("internal");
+    source.setStatus("disabled");
+    source.setDescription("standard description");
+    source.setVisibilityLevel("SCOPED");
+    source.setOwnerScopeId(9001L);
+    when(standardMapper.selectById(9902L)).thenReturn(source);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2002L)).thenReturn(List.of(
+        scopeMember(9001L, 2002L, 1, 1, 1, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> standardService.upgrade("9902", new StandardUpgradeRequest("V3.0", "upgrade draft")))
+        .isInstanceOf(BusinessException.class)
+        .extracting("code")
+        .isEqualTo("STANDARD_UPGRADE_ONLY_ACTIVE");
 
     verify(standardMapper, never()).insert(any(BizStandardEntity.class));
   }

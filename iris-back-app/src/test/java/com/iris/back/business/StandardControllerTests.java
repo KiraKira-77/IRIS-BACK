@@ -342,6 +342,70 @@ class StandardControllerTests {
 
   @Test
   @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void disableReturnsDisabledPayload() throws Exception {
+    when(standardService.disable("9903")).thenReturn(new StandardDto(
+        "9903",
+        "9902",
+        "STD-FIN-002",
+        "Finance Standard",
+        "internal",
+        "V2.0",
+        "2026-04-24",
+        "disabled",
+        List.of(),
+        "desc",
+        "2026-04-24T00:00:00",
+        "2026-04-24T00:00:00",
+        2,
+        "9902",
+        "PUBLIC",
+        "9001",
+        List.of(),
+        "disabled",
+        "Platform Administrator"
+    ));
+
+    mockMvc.perform(post("/api/v1/standards/9903/disable"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.message").value("standard disabled"))
+        .andExpect(jsonPath("$.data.status").value("disabled"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
+  void enableReturnsActivePayload() throws Exception {
+    when(standardService.enable("9903")).thenReturn(new StandardDto(
+        "9903",
+        "9902",
+        "STD-FIN-002",
+        "Finance Standard",
+        "internal",
+        "V2.0",
+        "2026-04-24",
+        "active",
+        List.of(),
+        "desc",
+        "2026-04-24T00:00:00",
+        "2026-04-24T00:00:00",
+        2,
+        "9902",
+        "PUBLIC",
+        "9001",
+        List.of(),
+        "enabled",
+        "Platform Administrator"
+    ));
+
+    mockMvc.perform(post("/api/v1/standards/9903/enable"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.message").value("standard enabled"))
+        .andExpect(jsonPath("$.data.status").value("active"));
+  }
+
+  @Test
+  @WithMockUser(username = "admin", roles = "PLATFORM_ADMIN")
   void rollbackReturnsCreatedDraftPayload() throws Exception {
     when(standardService.rollback(org.mockito.ArgumentMatchers.eq("9901"), any(StandardRollbackRequest.class)))
         .thenReturn(new StandardDto(

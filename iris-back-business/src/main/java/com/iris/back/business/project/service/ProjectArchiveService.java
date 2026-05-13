@@ -45,16 +45,20 @@ public class ProjectArchiveService {
 
   public PageResponse<ProjectArchiveDto> list(String keyword, String status, Long page, Long pageSize) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
-    Set<Long> visibleProjectIds = visibleProjectIds(principal);
-    if (visibleProjectIds.isEmpty()) {
-      return PageResponse.of(0, normalizedPage(page), normalizedPageSize(pageSize), List.of());
+    boolean superAdmin = isSuperAdmin(principal);
+    Set<Long> visibleProjectIds = Set.of();
+    if (!superAdmin) {
+      visibleProjectIds = visibleProjectIds(principal);
+      if (visibleProjectIds.isEmpty()) {
+        return PageResponse.of(0, normalizedPage(page), normalizedPageSize(pageSize), List.of());
+      }
     }
     String normalizedKeyword = trimToNull(keyword);
     String normalizedStatus = trimToNull(status);
     List<ProjectArchiveDto> filtered = nullToList(projectArchiveMapper.selectList(
         new LambdaQueryWrapper<BizProjectArchiveEntity>()
             .eq(BizProjectArchiveEntity::getTenantId, principal.tenantId())
-            .in(BizProjectArchiveEntity::getProjectId, visibleProjectIds)
+            .in(!superAdmin, BizProjectArchiveEntity::getProjectId, visibleProjectIds)
             .orderByDesc(BizProjectArchiveEntity::getArchiveDate)
             .orderByDesc(BizProjectArchiveEntity::getId)))
         .stream()
@@ -77,7 +81,8 @@ public class ProjectArchiveService {
     if (archive == null || !Objects.equals(archive.getTenantId(), principal.tenantId())) {
       throw new BusinessException("PROJECT_ARCHIVE_NOT_FOUND", "PROJECT_ARCHIVE_NOT_FOUND");
     }
-    if (!visibleProjectIds(principal).contains(archive.getProjectId())) {
+    // 档案是项目归档快照，超级管理员按租户全局可见，不需要项目成员关系。
+    if (!isSuperAdmin(principal) && !visibleProjectIds(principal).contains(archive.getProjectId())) {
       throw new BusinessException("PROJECT_ARCHIVE_FORBIDDEN", "PROJECT_ARCHIVE_FORBIDDEN");
     }
     return toDto(archive);
@@ -90,6 +95,13 @@ public class ProjectArchiveService {
         .stream()
         .map(BizProjectMemberEntity::getProjectId)
         .collect(Collectors.toSet());
+  }
+
+  private boolean isSuperAdmin(CurrentUserPrincipal principal) {
+    return nullToList(principal.roles()).stream()
+        .filter(Objects::nonNull)
+        .map(role -> role.toUpperCase(Locale.ROOT))
+        .anyMatch(role -> "PLATFORM_ADMIN".equals(role) || "SUPER_ADMIN".equals(role));
   }
 
   private ProjectArchiveDto toDto(BizProjectArchiveEntity archive) {

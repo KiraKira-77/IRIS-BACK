@@ -9,7 +9,6 @@ import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
 import com.iris.back.business.project.mapper.BizProjectMemberMapper;
 import com.iris.back.business.project.model.dto.ProjectArchiveDto;
 import com.iris.back.business.project.model.entity.BizProjectArchiveEntity;
-import com.iris.back.business.project.model.entity.BizProjectMemberEntity;
 import com.iris.back.business.project.service.ProjectArchiveService;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
@@ -58,15 +57,28 @@ class ProjectArchiveServiceTests {
             }
           ]
         }
-        """);
+    """);
     when(projectArchiveMapper.selectById(9101L)).thenReturn(archive);
-    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(7001L, 2001L)));
 
     ProjectArchiveDto detail = projectArchiveService.detail("9101");
 
     assertThat(detail.documents()).hasSize(1);
     assertThat(detail.documents().getFirst().category()).isEqualTo("OMS工单日志附件");
     assertThat(detail.documents().getFirst().name()).isEqualTo("测试报告20260421.docx");
+  }
+
+  @Test
+  void superAdminListsAndViewsArchivesWithoutProjectMembership() {
+    mockCurrentUser();
+    BizProjectArchiveEntity archive = archiveWithSnapshot("{\"workOrders\":[]}");
+    when(projectArchiveMapper.selectList(any())).thenReturn(List.of(archive));
+    when(projectArchiveMapper.selectById(9101L)).thenReturn(archive);
+
+    var page = projectArchiveService.list(null, null, 1L, 10L);
+    ProjectArchiveDto detail = projectArchiveService.detail("9101");
+
+    assertThat(page.getTotal()).isEqualTo(1);
+    assertThat(detail.id()).isEqualTo("9101");
   }
 
   private BizProjectArchiveEntity archiveWithSnapshot(String snapshotJson) {
@@ -88,17 +100,6 @@ class ProjectArchiveServiceTests {
     entity.setDocumentCount(1);
     entity.setCreatedAt(LocalDateTime.of(2026, 5, 7, 15, 30));
     entity.setUpdatedAt(LocalDateTime.of(2026, 5, 7, 15, 30));
-    return entity;
-  }
-
-  private BizProjectMemberEntity member(Long projectId, Long personnelId) {
-    BizProjectMemberEntity entity = new BizProjectMemberEntity();
-    entity.setId(projectId + personnelId);
-    entity.setTenantId(1001L);
-    entity.setProjectId(projectId);
-    entity.setPersonnelId(personnelId);
-    entity.setPersonnelName("User " + personnelId);
-    entity.setRole("leader");
     return entity;
   }
 

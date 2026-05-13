@@ -7,6 +7,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.iris.back.auth.service.AuthService;
+import com.iris.back.business.ai.mapper.AiModelConfigMapper;
+import com.iris.back.business.ai.mapper.AiChatTraceEventMapper;
+import com.iris.back.business.ai.mapper.AiChatTraceMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
@@ -62,6 +65,15 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 })
 @AutoConfigureMockMvc
 class SystemControllerTests {
+
+  @MockBean
+  private AiModelConfigMapper aiModelConfigMapper;
+
+  @MockBean
+  private AiChatTraceMapper aiChatTraceMapper;
+
+  @MockBean
+  private AiChatTraceEventMapper aiChatTraceEventMapper;
 
   @Autowired
   private MockMvc mockMvc;

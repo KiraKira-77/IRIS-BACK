@@ -112,6 +112,21 @@ class RectificationServiceTests {
   }
 
   @Test
+  void superAdminListsAllRectificationsWithoutProjectMembership() {
+    mockCurrentUser(2001L, "admin", "Platform Administrator", List.of("SUPER_ADMIN"));
+    BizProjectRectificationEntity first = rectification(9001L, "pending");
+    BizProjectRectificationEntity second = rectification(9002L, "in_progress");
+    second.setProjectId(7002L);
+    when(rectificationMapper.selectList(any())).thenReturn(List.of(first, second));
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of());
+
+    var page = rectificationService.list(new RectificationListQuery(null, null, null, null, 1L, 10L));
+
+    assertThat(page.getTotal()).isEqualTo(2);
+    assertThat(page.getRecords()).extracting("id").containsExactly("9001", "9002");
+  }
+
+  @Test
   void getRejectsRectificationWhenCurrentUserIsNotProjectMemberOrContact() {
     mockCurrentUser(2999L, "outsider", "Outsider");
     BizProjectRectificationEntity entity = rectification(9001L, "pending");
@@ -122,6 +137,19 @@ class RectificationServiceTests {
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("RECTIFICATION_FORBIDDEN");
   }
+
+  @Test
+  void superAdminGetsRectificationWithoutProjectMembership() {
+    mockCurrentUser(2001L, "admin", "Platform Administrator", List.of("SUPER_ADMIN"));
+    BizProjectRectificationEntity entity = rectification(9001L, "pending");
+    when(rectificationMapper.selectById(9001L)).thenReturn(entity);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of());
+
+    RectificationDto detail = rectificationService.get("9001");
+
+    assertThat(detail.id()).isEqualTo("9001");
+  }
+
 
   @Test
   void createManualRectificationStoresMinimalFields() {
@@ -482,6 +510,10 @@ class RectificationServiceTests {
   }
 
   private void mockCurrentUser(Long userId, String account, String username) {
+    mockCurrentUser(userId, account, username, List.of("PROJECT_USER"));
+  }
+
+  private void mockCurrentUser(Long userId, String account, String username, List<String> roles) {
     when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
         "token",
         userId,
@@ -489,7 +521,7 @@ class RectificationServiceTests {
         account,
         username,
         "IRIS",
-        List.of("SUPER_ADMIN")
+        roles
     ));
   }
 }

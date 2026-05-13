@@ -73,6 +73,7 @@ public class ProjectService {
   private final IdentifierGenerator identifierGenerator;
   private final OmsClient omsClient;
   private final ObjectMapper objectMapper;
+  private final ProjectOperationLogService operationLogService;
 
   public ProjectService(
       BizProjectMapper projectMapper,
@@ -87,7 +88,8 @@ public class ProjectService {
       CurrentUserContext currentUserContext,
       IdentifierGenerator identifierGenerator,
       OmsClient omsClient,
-      ObjectMapper objectMapper
+      ObjectMapper objectMapper,
+      ProjectOperationLogService operationLogService
   ) {
     this.projectMapper = projectMapper;
     this.projectArchiveMapper = projectArchiveMapper;
@@ -102,6 +104,7 @@ public class ProjectService {
     this.identifierGenerator = identifierGenerator;
     this.omsClient = omsClient;
     this.objectMapper = objectMapper;
+    this.operationLogService = operationLogService;
   }
 
   public PageResponse<ProjectDto> list(ProjectListQuery query) {
@@ -109,24 +112,29 @@ public class ProjectService {
     ProjectListQuery safeQuery = query == null
         ? new ProjectListQuery(null, null, null, null, null, null, 1L, 10L)
         : query;
-    List<BizProjectMemberEntity> myMemberships = projectMemberMapper.selectList(
-        new LambdaQueryWrapper<BizProjectMemberEntity>()
-            .eq(BizProjectMemberEntity::getTenantId, principal.tenantId())
-            .eq(BizProjectMemberEntity::getPersonnelId, principal.userId())
-    );
-    Set<Long> visibleProjectIds = myMemberships.stream()
-        .map(BizProjectMemberEntity::getProjectId)
-        .collect(Collectors.toSet());
-    if (visibleProjectIds.isEmpty()) {
-      return PageResponse.of(0, normalizedPage(safeQuery.page()), normalizedPageSize(safeQuery.pageSize()), List.of());
+    boolean superAdmin = isSuperAdmin(principal);
+    Set<Long> visibleProjectIds = Set.of();
+    if (!superAdmin) {
+      List<BizProjectMemberEntity> myMemberships = projectMemberMapper.selectList(
+          new LambdaQueryWrapper<BizProjectMemberEntity>()
+              .eq(BizProjectMemberEntity::getTenantId, principal.tenantId())
+              .eq(BizProjectMemberEntity::getPersonnelId, principal.userId())
+      );
+      visibleProjectIds = myMemberships.stream()
+          .map(BizProjectMemberEntity::getProjectId)
+          .collect(Collectors.toSet());
+      if (visibleProjectIds.isEmpty()) {
+        return PageResponse.of(0, normalizedPage(safeQuery.page()), normalizedPageSize(safeQuery.pageSize()), List.of());
+      }
     }
 
     List<BizProjectEntity> projects = projectMapper.selectList(new LambdaQueryWrapper<BizProjectEntity>()
         .eq(BizProjectEntity::getTenantId, principal.tenantId())
         .orderByDesc(BizProjectEntity::getUpdatedAt)
         .orderByDesc(BizProjectEntity::getId));
+    Set<Long> finalVisibleProjectIds = visibleProjectIds;
     List<BizProjectEntity> filteredProjects = projects.stream()
-        .filter(project -> visibleProjectIds.contains(project.getId()))
+        .filter(project -> superAdmin || finalVisibleProjectIds.contains(project.getId()))
         .filter(project -> matches(project, safeQuery))
         .toList();
     Map<Long, List<BizProjectMemberEntity>> membersByProjectId = loadMembers(principal.tenantId(), filteredProjects);
@@ -166,6 +174,7 @@ public class ProjectService {
     project.setStatus("in_progress");
     project.setUpdatedBy(principal.userId());
     projectMapper.updateById(project);
+    recordProjectOperation(principal, project.getId(), null, null, "启动项目", "项目进入执行中");
     return toDto(project, members, listTasks(principal.tenantId(), project.getId()));
   }
 
@@ -188,6 +197,7 @@ public class ProjectService {
     project.setEndDate(LocalDate.now());
     project.setUpdatedBy(principal.userId());
     projectMapper.updateById(project);
+    recordProjectOperation(principal, project.getId(), null, null, "完成项目", "所有检查项已完成审核");
     return toDto(project, members, tasks);
   }
 
@@ -244,6 +254,7 @@ public class ProjectService {
     project.setArchiveError(null);
     project.setUpdatedBy(principal.userId());
     projectMapper.updateById(project);
+    recordProjectOperation(principal, project.getId(), null, null, "归档项目", "归档前已同步 OMS 工单快照");
     return toDto(project, members, tasks);
   }
 
@@ -271,6 +282,7 @@ public class ProjectService {
     project.setUpdatedBy(principal.userId());
     projectMapper.updateById(project);
     List<BizProjectMemberEntity> members = replaceMembers(project.getId(), principal, request.members());
+    recordProjectOperation(principal, project.getId(), null, null, "更新项目", "更新项目基础信息和成员");
     return toDto(project, members, listTasks(principal.tenantId(), project.getId()));
   }
 
@@ -287,6 +299,7 @@ public class ProjectService {
         .eq(BizProjectTaskEntity::getProjectId, project.getId()));
     projectMemberMapper.hardDeleteByProject(principal.tenantId(), project.getId());
     projectMapper.deleteById(project.getId());
+    recordProjectOperation(principal, project.getId(), null, null, "删除项目", "删除未启动项目");
   }
 
   public List<ProjectTaskWorkOrderDto> listTaskWorkOrders(String projectId, String taskId) {
@@ -340,6 +353,14 @@ public class ProjectService {
         })
         .toList();
     List<BizProjectTaskEntity> tasks = listTasks(principal.tenantId(), project.getId());
+    recordProjectOperation(
+        principal,
+        project.getId(),
+        null,
+        null,
+        "设置检查项负责人",
+        "检查项负责人：" + assigneeName + "，数量：" + assignedTasks.size()
+    );
     return toDto(project, members, tasks.isEmpty() ? assignedTasks : tasks);
   }
 
@@ -400,6 +421,14 @@ public class ProjectService {
       task.setUpdatedBy(principal.userId());
       projectTaskMapper.updateById(task);
     }
+    recordProjectOperation(
+        principal,
+        project.getId(),
+        task.getId(),
+        null,
+        "创建OMS工单",
+        "创建 OMS 工单数量：" + workOrders.size()
+    );
     return workOrders.stream().map(this::toWorkOrderDto).toList();
   }
 
@@ -441,6 +470,14 @@ public class ProjectService {
     // 审核只记录结论；不符合项后续由负责人二选一处置：生成整改单或承担风险。
     projectTaskWorkOrderMapper.updateById(workOrder);
     updateTaskStatusAfterWorkOrderReview(task, principal);
+    recordProjectOperation(
+        principal,
+        project.getId(),
+        task.getId(),
+        workOrder.getId(),
+        "审核工单",
+        "审核结果：" + reviewStatus + "，审核意见：" + nonBlank(request.opinion(), null, "无")
+    );
     return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
   }
 
@@ -463,6 +500,14 @@ public class ProjectService {
     String omsWorkOrderId = normalizeRequiredText(workOrder.getOmsWorkOrderId(), "PROJECT_WORK_ORDER_OMS_ID_REQUIRED");
     syncWorkOrderFromOms(workOrder, principal, omsWorkOrderId);
     projectTaskWorkOrderMapper.updateById(workOrder);
+    recordProjectOperation(
+        principal,
+        project.getId(),
+        task.getId(),
+        workOrder.getId(),
+        "同步OMS工单",
+        "OMS 工单号：" + omsWorkOrderId + "，当前状态：" + nonBlank(workOrder.getOmsStatusName(), workOrder.getOmsStatus(), "未知")
+    );
     return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
   }
 
@@ -490,6 +535,14 @@ public class ProjectService {
 
     BizProjectRectificationEntity rectification = createRectification(project, task, workOrder, principal);
     projectRectificationMapper.insert(rectification);
+    recordProjectOperation(
+        principal,
+        project.getId(),
+        task.getId(),
+        workOrder.getId(),
+        "生成整改单",
+        "整改单：" + rectification.getRectificationCode()
+    );
     return toRectificationDto(rectification);
   }
 
@@ -529,6 +582,14 @@ public class ProjectService {
     workOrder.setRiskAcceptedBy(principal.userId());
     workOrder.setUpdatedBy(principal.userId());
     projectTaskWorkOrderMapper.updateById(workOrder);
+    recordProjectOperation(
+        principal,
+        project.getId(),
+        task.getId(),
+        workOrder.getId(),
+        "承担风险",
+        "风险承担原因：" + request.reason()
+    );
     return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
   }
 
@@ -578,6 +639,14 @@ public class ProjectService {
     // 退回成功后立即同步一次 OMS 详情和日志，让前端看到 OMS 最新状态。
     syncWorkOrderFromOms(workOrder, principal, omsWorkOrderId);
     projectTaskWorkOrderMapper.updateById(workOrder);
+    recordProjectOperation(
+        principal,
+        project.getId(),
+        task.getId(),
+        workOrder.getId(),
+        "退回工单",
+        "退回原因：" + reason
+    );
     return toWorkOrderDto(workOrder, employeeNoByPersonnelId(members));
   }
 
@@ -606,6 +675,18 @@ public class ProjectService {
     }
   }
 
+  private void recordProjectOperation(
+      CurrentUserPrincipal principal,
+      Long projectId,
+      Long taskId,
+      Long workOrderId,
+      String action,
+      String remark
+  ) {
+    // 项目操作日志用于审计追溯，记录关键业务动作，不能绕过主业务事务单独成功。
+    operationLogService.recordProjectLog(principal, projectId, taskId, workOrderId, action, remark);
+  }
+
   @Transactional
   public void deleteWorkOrder(String projectId, String taskId, String workOrderId) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
@@ -627,6 +708,14 @@ public class ProjectService {
         .eq(BizProjectTaskWorkOrderEntity::getProjectId, parsedProjectId)
         .eq(BizProjectTaskWorkOrderEntity::getTaskId, parsedTaskId)
         .eq(BizProjectTaskWorkOrderEntity::getId, workOrder.getId()));
+    recordProjectOperation(
+        principal,
+        project.getId(),
+        task.getId(),
+        workOrder.getId(),
+        "删除OMS工单记录",
+        "删除待处理工单记录"
+    );
   }
 
   @Transactional
@@ -654,6 +743,7 @@ public class ProjectService {
     List<BizProjectMemberEntity> members = createMembers(project.getId(), principal, request.members());
     List<BizProjectTaskEntity> tasks = createTasks(project.getId(), principal, checklists, checklistItems);
     linkPlanItemsToProject(project, principal);
+    recordProjectOperation(principal, project.getId(), null, null, "创建项目", "创建项目：" + project.getProjectName());
     return toDto(project, members, tasks);
   }
 
@@ -1090,11 +1180,22 @@ public class ProjectService {
       List<BizProjectMemberEntity> members,
       CurrentUserPrincipal principal
   ) {
+    // 超级管理员需要具备租户内全局查看权限，不依赖项目成员关系。
+    if (isSuperAdmin(principal)) {
+      return;
+    }
     boolean visible = Objects.equals(project.getLeaderId(), principal.userId())
         || members.stream().anyMatch(member -> Objects.equals(member.getPersonnelId(), principal.userId()));
     if (!visible) {
       throw new BusinessException("PROJECT_FORBIDDEN", "PROJECT_FORBIDDEN");
     }
+  }
+
+  private boolean isSuperAdmin(CurrentUserPrincipal principal) {
+    return nullToList(principal.roles()).stream()
+        .filter(Objects::nonNull)
+        .map(role -> role.toUpperCase(Locale.ROOT))
+        .anyMatch(role -> "PLATFORM_ADMIN".equals(role) || "SUPER_ADMIN".equals(role));
   }
 
   private void ensureLeader(BizProjectEntity project, CurrentUserPrincipal principal) {

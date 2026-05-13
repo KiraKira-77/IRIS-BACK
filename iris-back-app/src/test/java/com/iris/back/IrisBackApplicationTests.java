@@ -1,6 +1,9 @@
 package com.iris.back;
 
 import com.iris.back.auth.service.AuthService;
+import com.iris.back.business.ai.mapper.AiModelConfigMapper;
+import com.iris.back.business.ai.mapper.AiChatTraceEventMapper;
+import com.iris.back.business.ai.mapper.AiChatTraceMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistItemMapper;
 import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
@@ -38,6 +41,15 @@ import org.springframework.boot.test.mock.mockito.MockBean;
         + "com.baomidou.mybatisplus.autoconfigure.MybatisPlusAutoConfiguration"
 })
 class IrisBackApplicationTests {
+
+  @MockBean
+  private AiModelConfigMapper aiModelConfigMapper;
+
+  @MockBean
+  private AiChatTraceMapper aiChatTraceMapper;
+
+  @MockBean
+  private AiChatTraceEventMapper aiChatTraceEventMapper;
 
   @MockBean
   private SysTenantMapper tenantMapper;

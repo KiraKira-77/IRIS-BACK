@@ -38,6 +38,7 @@ import com.iris.back.business.project.model.request.ProjectWorkOrderRiskAcceptRe
 import com.iris.back.business.project.model.request.ProjectWorkOrderReturnRequest;
 import com.iris.back.business.project.model.request.ProjectWorkOrderReviewRequest;
 import com.iris.back.business.project.service.OmsClient;
+import com.iris.back.business.project.service.ProjectOperationLogService;
 import com.iris.back.business.project.service.ProjectService;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
@@ -92,6 +93,9 @@ class ProjectServiceTests {
   @Mock
   private OmsClient omsClient;
 
+  @Mock
+  private ProjectOperationLogService operationLogService;
+
   private ProjectService projectService;
 
   @BeforeEach
@@ -109,7 +113,8 @@ class ProjectServiceTests {
         currentUserContext,
         identifierGenerator,
         omsClient,
-        new ObjectMapper()
+        new ObjectMapper(),
+        operationLogService
     );
   }
 
@@ -142,6 +147,14 @@ class ProjectServiceTests {
     assertThat(workOrderCaptor.getValue().getIrisReviewStatus()).isEqualTo("passed");
     assertThat(workOrderCaptor.getValue().getReviewLocked()).isEqualTo(1);
     assertThat(task.getStatus()).isEqualTo("passed");
+    verify(operationLogService).recordProjectLog(
+        any(CurrentUserPrincipal.class),
+        org.mockito.ArgumentMatchers.eq(7001L),
+        org.mockito.ArgumentMatchers.eq(7201L),
+        org.mockito.ArgumentMatchers.eq(8001L),
+        org.mockito.ArgumentMatchers.eq("审核工单"),
+        org.mockito.ArgumentMatchers.contains("Evidence accepted")
+    );
   }
 
   @Test
@@ -790,6 +803,21 @@ class ProjectServiceTests {
   }
 
   @Test
+  void superAdminListsAllTenantProjectsWithoutMembership() {
+    mockCurrentUser();
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of());
+    when(projectMapper.selectList(any())).thenReturn(List.of(
+        project(7001L, "PRJ-2026-001", "Finance project", "in_progress"),
+        project(7002L, "PRJ-2026-002", "Hidden project", "completed")
+    ));
+
+    var page = projectService.list(new ProjectListQuery(null, null, null, null, null, null, 1L, 10L));
+
+    assertThat(page.getTotal()).isEqualTo(2);
+    assertThat(page.getRecords()).extracting("id").containsExactly("7001", "7002");
+  }
+
+  @Test
   void formatsProjectAndTaskTimestampsWithoutIsoSeparator() {
     mockCurrentUser();
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
@@ -845,7 +873,7 @@ class ProjectServiceTests {
 
   @Test
   void detailRejectsNonProjectMember() {
-    mockCurrentUser();
+    mockCurrentUser(2999L, "outsider", "Outsider", List.of("PROJECT_USER"));
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
     project.setLeaderId(4001L);
     when(projectMapper.selectById(7001L)).thenReturn(project);
@@ -854,6 +882,20 @@ class ProjectServiceTests {
     Assertions.assertThatThrownBy(() -> projectService.get("7001"))
         .isInstanceOf(BusinessException.class)
         .hasMessageContaining("PROJECT_FORBIDDEN");
+  }
+
+  @Test
+  void superAdminGetsProjectDetailWithoutMembership() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    project.setLeaderId(4001L);
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(7001L, 3001L, "observer")));
+
+    ProjectDto detail = projectService.get("7001");
+
+    assertThat(detail.id()).isEqualTo("7001");
+    assertThat(detail.name()).isEqualTo("Finance project");
   }
 
   @Test
@@ -1569,14 +1611,18 @@ class ProjectServiceTests {
   }
 
   private void mockCurrentUser() {
+    mockCurrentUser(2001L, "admin", "Platform Administrator", List.of("SUPER_ADMIN"));
+  }
+
+  private void mockCurrentUser(Long userId, String account, String username, List<String> roles) {
     when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
         "token",
-        2001L,
+        userId,
         1001L,
-        "admin",
-        "Platform Administrator",
+        account,
+        username,
         "IRIS",
-        List.of("SUPER_ADMIN")
+        roles
     ));
   }
 }

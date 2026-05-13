@@ -10,7 +10,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
     "com.iris.back.business.standard.mapper",
     "com.iris.back.business.checklist.mapper",
     "com.iris.back.business.plan.mapper",
-    "com.iris.back.business.project.mapper"
+    "com.iris.back.business.project.mapper",
+    "com.iris.back.business.ai.mapper"
 })
 public class IrisBackApplication {
 

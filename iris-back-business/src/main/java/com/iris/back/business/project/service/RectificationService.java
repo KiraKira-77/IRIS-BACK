@@ -349,11 +349,22 @@ public class RectificationService {
       CurrentUserPrincipal principal,
       List<BizProjectMemberEntity> members
   ) {
+    // 超级管理员需要看到租户内全部整改单，查看权限不依赖项目成员或整改对接人关系。
+    if (isSuperAdmin(principal)) {
+      return true;
+    }
     if (entity.getProjectId() == null) {
       return Objects.equals(entity.getCreatedBy(), principal.userId())
           || isRectificationAssignee(entity, principal);
     }
     return isCurrentProjectMember(principal, members) || isRectificationAssignee(entity, principal);
+  }
+
+  private boolean isSuperAdmin(CurrentUserPrincipal principal) {
+    return nullToList(principal.roles()).stream()
+        .filter(Objects::nonNull)
+        .map(role -> role.toUpperCase(Locale.ROOT))
+        .anyMatch(role -> "PLATFORM_ADMIN".equals(role) || "SUPER_ADMIN".equals(role));
   }
 
   private List<BizProjectMemberEntity> listProjectMembers(Long tenantId, Long projectId) {

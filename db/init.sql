@@ -315,6 +315,7 @@ CREATE TABLE IF NOT EXISTS biz_project (
   description TEXT NULL,
   start_date DATE NOT NULL,
   end_date DATE NULL,
+  actual_started_at DATETIME NULL,
   status VARCHAR(32) NOT NULL,
   tag_ids VARCHAR(500) NULL,
   tag_names VARCHAR(1000) NULL,

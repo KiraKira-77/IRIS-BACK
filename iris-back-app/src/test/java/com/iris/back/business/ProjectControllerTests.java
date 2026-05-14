@@ -426,6 +426,7 @@ class ProjectControllerTests {
         "Finance controls",
         "2026-04-27",
         null,
+        "2026-04-27 10:00:00",
         status,
         List.of("maintenance"),
         List.of("maintenance"),

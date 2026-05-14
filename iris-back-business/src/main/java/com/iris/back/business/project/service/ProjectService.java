@@ -172,6 +172,7 @@ public class ProjectService {
       throw new BusinessException("PROJECT_START_STATUS_INVALID", "PROJECT_START_STATUS_INVALID");
     }
     project.setStatus("in_progress");
+    project.setActualStartedAt(LocalDateTime.now());
     project.setUpdatedBy(principal.userId());
     projectMapper.updateById(project);
     recordProjectOperation(principal, project.getId(), null, null, "启动项目", "项目进入执行中");
@@ -1477,6 +1478,7 @@ public class ProjectService {
         project.getDescription(),
         project.getStartDate() == null ? null : project.getStartDate().toString(),
         project.getEndDate() == null ? null : project.getEndDate().toString(),
+        DateTimeFormatters.formatDateTime(project.getActualStartedAt()),
         project.getStatus(),
         splitCsv(project.getTagIds()),
         splitCsv(project.getTagNames()),

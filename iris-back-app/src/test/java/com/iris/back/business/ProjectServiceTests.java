@@ -909,7 +909,9 @@ class ProjectServiceTests {
     ArgumentCaptor<BizProjectEntity> projectCaptor = ArgumentCaptor.forClass(BizProjectEntity.class);
     verify(projectMapper).updateById(projectCaptor.capture());
     assertThat(started.status()).isEqualTo("in_progress");
+    assertThat(started.actualStartedAt()).isNotBlank();
     assertThat(projectCaptor.getValue().getStatus()).isEqualTo("in_progress");
+    assertThat(projectCaptor.getValue().getActualStartedAt()).isNotNull();
   }
 
   @Test

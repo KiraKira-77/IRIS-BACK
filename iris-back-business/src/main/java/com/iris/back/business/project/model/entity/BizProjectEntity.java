@@ -16,6 +16,7 @@ public class BizProjectEntity extends BaseEntity {
   private String description;
   private LocalDate startDate;
   private LocalDate endDate;
+  private LocalDateTime actualStartedAt;
   private String status;
   private String tagIds;
   private String tagNames;
@@ -89,6 +90,14 @@ public class BizProjectEntity extends BaseEntity {
 
   public void setEndDate(LocalDate endDate) {
     this.endDate = endDate;
+  }
+
+  public LocalDateTime getActualStartedAt() {
+    return actualStartedAt;
+  }
+
+  public void setActualStartedAt(LocalDateTime actualStartedAt) {
+    this.actualStartedAt = actualStartedAt;
   }
 
   public String getStatus() {

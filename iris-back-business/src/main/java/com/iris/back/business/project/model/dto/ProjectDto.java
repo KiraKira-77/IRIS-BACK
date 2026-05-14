@@ -12,6 +12,7 @@ public record ProjectDto(
     String description,
     String startDate,
     String endDate,
+    String actualStartedAt,
     String status,
     List<String> tagIds,
     List<String> tagNames,

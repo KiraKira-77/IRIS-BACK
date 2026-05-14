@@ -175,6 +175,7 @@ class AiChatContextServiceTests {
         "检查关键权限",
         "2026-05-01",
         "2026-05-31",
+        "2026-05-01 09:00:00",
         "in_progress",
         List.of(),
         List.of(),

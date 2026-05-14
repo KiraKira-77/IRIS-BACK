@@ -1,6 +1,7 @@
 package com.iris.back.business;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -23,6 +24,8 @@ import com.iris.back.business.project.model.entity.BizProjectEntity;
 import com.iris.back.common.exception.BusinessException;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -33,6 +36,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
 
 @ExtendWith(MockitoExtension.class)
 class PlanServiceTests {
@@ -48,6 +52,9 @@ class PlanServiceTests {
 
   @Mock
   private CurrentUserContext currentUserContext;
+
+  @Mock
+  private SysResourceScopeMemberMapper resourceScopeMemberMapper;
 
   @Mock
   private IdentifierGenerator identifierGenerator;
@@ -76,6 +83,79 @@ class PlanServiceTests {
         assertThat(item.checklistIds()).containsExactly("8801", "8802");
       });
     });
+  }
+
+  @Test
+  void listReturnsOnlyPlansVisibleToCurrentUserResourceScopes() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    BizPlanEntity ownerVisible = plan("9001", "PL-2026-001", "Owner visible plan", "approved");
+    ownerVisible.setOwnerScopeId(9001L);
+    BizPlanEntity sharedVisible = plan("9002", "PL-2026-002", "Shared visible plan", "approved");
+    sharedVisible.setOwnerScopeId(9008L);
+    sharedVisible.setSharedScopeIds("9002");
+    BizPlanEntity hidden = plan("9003", "PL-2026-003", "Hidden plan", "approved");
+    hidden.setOwnerScopeId(9010L);
+    hidden.setSharedScopeIds("9011");
+    when(planMapper.selectList(any())).thenReturn(List.of(ownerVisible, sharedVisible, hidden));
+    when(planItemMapper.selectList(any())).thenReturn(List.of());
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0),
+        scopeMember(9002L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    var page = planService.list(new PlanListQuery(null, null, null, 1L, 10L));
+
+    assertThat(page.getRecords())
+        .extracting(PlanDto::id)
+        .containsExactly("9001", "9002");
+  }
+
+  @Test
+  void createRequiresEditOrManagePermissionInOwnerScope() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 1, 0, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> planService.create(request("9001", null)))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("create plan");
+
+    verify(planMapper, never()).insert(any(BizPlanEntity.class));
+  }
+
+  @Test
+  void updateRequiresEditOrManagePermissionInExistingOwnerScope() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    BizPlanEntity existing = plan("9001", "PL-2026-001", "Owner visible plan", "draft");
+    existing.setOwnerScopeId(9001L);
+    when(planMapper.selectById(9001L)).thenReturn(existing);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 0, 0, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> planService.update("9001", request("9001", null)))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("edit plan");
+
+    verify(planMapper, never()).updateById(any(BizPlanEntity.class));
+  }
+
+  @Test
+  void createChildRequiresEditOrManagePermissionOnParentOwnerScope() {
+    mockCurrentUser(2004L, List.of("AUDITOR"));
+    BizPlanEntity parent = plan("9001", "PL-2026-001", "Parent plan", "approved");
+    parent.setOwnerScopeId(9001L);
+    when(planMapper.selectById(9001L)).thenReturn(parent);
+    when(resourceScopeMemberMapper.selectByTenantIdAndUserId(1001L, 2004L)).thenReturn(List.of(
+        scopeMember(9001L, 2004L, 1, 1, 0, 0, 0)
+    ));
+
+    assertThatThrownBy(() -> planService.create(request("9001", "9001")))
+        .isInstanceOf(AccessDeniedException.class)
+        .hasMessageContaining("create child plan");
+
+    verify(planMapper, never()).insert(any(BizPlanEntity.class));
   }
 
   @Test
@@ -402,6 +482,46 @@ class PlanServiceTests {
     return entity;
   }
 
+  private PlanUpsertRequest request(String ownerScopeId, String parentId) {
+    return new PlanUpsertRequest(
+        "PL-2026-001",
+        "2026 annual control plan",
+        "yearly",
+        2026,
+        "full-year",
+        "draft",
+        "annual scope",
+        ownerScopeId,
+        List.of(),
+        parentId,
+        List.of()
+    );
+  }
+
+  private ResourceScopeMemberDto scopeMember(
+      Long scopeId,
+      Long userId,
+      Integer canView,
+      Integer canCreate,
+      Integer canEdit,
+      Integer canDelete,
+      Integer canManage
+  ) {
+    return new ResourceScopeMemberDto(
+        "1",
+        String.valueOf(scopeId),
+        String.valueOf(userId),
+        "user",
+        "User",
+        canView,
+        canCreate,
+        canEdit,
+        canDelete,
+        canManage,
+        "test"
+    );
+  }
+
   private void mockCurrentUser() {
     when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
         "token",
@@ -411,6 +531,18 @@ class PlanServiceTests {
         "Platform Administrator",
         "IRIS",
         List.of("SUPER_ADMIN")
+    ));
+  }
+
+  private void mockCurrentUser(Long userId, List<String> roles) {
+    when(currentUserContext.requireCurrentUser()).thenReturn(new CurrentUserPrincipal(
+        "token",
+        userId,
+        1001L,
+        "user",
+        "User",
+        "IRIS",
+        roles
     ));
   }
 }

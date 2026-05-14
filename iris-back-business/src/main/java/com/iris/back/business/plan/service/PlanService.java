@@ -18,6 +18,8 @@ import com.iris.back.common.model.PageResponse;
 import com.iris.back.common.util.DateTimeFormatters;
 import com.iris.back.framework.security.CurrentUserContext;
 import com.iris.back.framework.security.CurrentUserPrincipal;
+import com.iris.back.system.mapper.SysResourceScopeMemberMapper;
+import com.iris.back.system.model.dto.ResourceScopeMemberDto;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
@@ -28,7 +30,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +43,7 @@ public class PlanService {
   private final BizPlanItemMapper planItemMapper;
   private final BizProjectMapper projectMapper;
   private final CurrentUserContext currentUserContext;
+  private final SysResourceScopeMemberMapper resourceScopeMemberMapper;
   private final IdentifierGenerator identifierGenerator;
 
   public PlanService(
@@ -46,12 +51,14 @@ public class PlanService {
       BizPlanItemMapper planItemMapper,
       BizProjectMapper projectMapper,
       CurrentUserContext currentUserContext,
+      SysResourceScopeMemberMapper resourceScopeMemberMapper,
       IdentifierGenerator identifierGenerator
   ) {
     this.planMapper = planMapper;
     this.planItemMapper = planItemMapper;
     this.projectMapper = projectMapper;
     this.currentUserContext = currentUserContext;
+    this.resourceScopeMemberMapper = resourceScopeMemberMapper;
     this.identifierGenerator = identifierGenerator;
   }
 
@@ -70,12 +77,14 @@ public class PlanService {
         itemsByPlanId.values().stream().flatMap(List::stream).toList()
     );
     Map<Long, String> statusByPlanId = deriveStatuses(entities, itemsByPlanId, projectById);
+    PlanPermissionContext permissionContext = buildPermissionContext(principal);
     List<PlanDto> filtered = entities.stream()
         .map(entity -> toDto(
             entity,
             itemsByPlanId.getOrDefault(entity.getId(), List.of()),
             statusByPlanId.getOrDefault(entity.getId(), normalizeStatus(entity.getStatus(), null))
         ))
+        .filter(item -> canView(item, permissionContext))
         .filter(item -> matches(item, safeQuery))
         .toList();
 
@@ -89,6 +98,7 @@ public class PlanService {
   public PlanDto get(String id) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizPlanEntity entity = requirePlan(parseId(id, "PLAN_ID_INVALID"), principal.tenantId());
+    ensureCanView(entity, buildPermissionContext(principal));
     return toDto(entity, buildPlanStatusContext(principal.tenantId(), entity));
   }
 
@@ -99,6 +109,12 @@ public class PlanService {
     entity.setId(nextId(entity));
     entity.setTenantId(principal.tenantId());
     applyFields(entity, request, true);
+    PlanPermissionContext permissionContext = buildPermissionContext(principal);
+    ensureCanEditOwnerScope(entity.getOwnerScopeId(), permissionContext, "create plan in selected scope");
+    if (entity.getParentId() != null) {
+      BizPlanEntity parent = requirePlan(entity.getParentId(), principal.tenantId());
+      ensureCanEditOwnerScope(parent.getOwnerScopeId(), permissionContext, "create child plan");
+    }
     entity.setDeleted(0);
     entity.setVersion(0L);
     entity.setCreatedBy(principal.userId());
@@ -112,6 +128,11 @@ public class PlanService {
   public PlanDto update(String id, PlanUpsertRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizPlanEntity entity = requirePlan(parseId(id, "PLAN_ID_INVALID"), principal.tenantId());
+    PlanPermissionContext permissionContext = buildPermissionContext(principal);
+    ensureCanEdit(entity, permissionContext);
+    Long nextOwnerScopeId = parseId(normalizeRequiredText(request.ownerScopeId(), "PLAN_OWNER_SCOPE_REQUIRED"),
+        "PLAN_OWNER_SCOPE_INVALID");
+    ensureOwnerScopeChangeAllowed(entity, nextOwnerScopeId, permissionContext);
     applyFields(entity, request, false);
     entity.setUpdatedBy(principal.userId());
     planMapper.updateById(entity);
@@ -129,6 +150,10 @@ public class PlanService {
       plans = java.util.stream.Stream.concat(plans.stream(), java.util.stream.Stream.of(entity)).toList();
     }
     Set<Long> planIds = collectPlanSubtreeIds(entity.getId(), plans);
+    PlanPermissionContext permissionContext = buildPermissionContext(principal);
+    plans.stream()
+        .filter(plan -> planIds.contains(plan.getId()))
+        .forEach(plan -> ensureCanEdit(plan, permissionContext));
     List<BizPlanItemEntity> items = nullToList(planItemMapper.selectList(new LambdaQueryWrapper<BizPlanItemEntity>()
         .eq(BizPlanItemEntity::getTenantId, principal.tenantId())
         .in(BizPlanItemEntity::getPlanId, planIds)));
@@ -154,6 +179,7 @@ public class PlanService {
   private PlanDto updateStatus(String id, String status, boolean approve) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
     BizPlanEntity entity = requirePlan(parseId(id, "PLAN_ID_INVALID"), principal.tenantId());
+    ensureCanEdit(entity, buildPermissionContext(principal));
     entity.setStatus(status);
     entity.setUpdatedBy(principal.userId());
     if (approve) {
@@ -278,6 +304,128 @@ public class PlanService {
       throw new BusinessException("PLAN_NOT_FOUND", "plan not found: " + id);
     }
     return entity;
+  }
+
+  private PlanPermissionContext buildPermissionContext(CurrentUserPrincipal principal) {
+    if (isSuperAdmin(principal)) {
+      return new PlanPermissionContext(true, Map.of());
+    }
+
+    Map<String, ResourceScopeMemberDto> memberships = nullToList(resourceScopeMemberMapper
+            .selectByTenantIdAndUserId(principal.tenantId(), principal.userId()))
+        .stream()
+        .collect(Collectors.toMap(ResourceScopeMemberDto::scopeId, member -> member, (left, right) -> left));
+
+    return new PlanPermissionContext(false, memberships);
+  }
+
+  private boolean canView(BizPlanEntity entity, PlanPermissionContext permissionContext) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    if (hasAnyOwnerAccess(entity.getOwnerScopeId(), permissionContext)) {
+      return true;
+    }
+    return splitCsv(entity.getSharedScopeIds()).stream()
+        .anyMatch(scopeId -> hasViewAccess(scopeId, permissionContext));
+  }
+
+  private boolean canView(PlanDto dto, PlanPermissionContext permissionContext) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    if (hasAnyOwnerAccess(parseId(dto.ownerScopeId(), "PLAN_OWNER_SCOPE_INVALID"), permissionContext)) {
+      return true;
+    }
+    return dto.grants().stream()
+        .map(PlanDto.ScopeGrantDto::scopeId)
+        .anyMatch(scopeId -> hasViewAccess(scopeId, permissionContext));
+  }
+
+  private void ensureCanView(BizPlanEntity entity, PlanPermissionContext permissionContext) {
+    if (!canView(entity, permissionContext)) {
+      throw new AccessDeniedException("no permission to view plan");
+    }
+  }
+
+  private void ensureCanEdit(BizPlanEntity entity, PlanPermissionContext permissionContext) {
+    ensureCanEditOwnerScope(entity.getOwnerScopeId(), permissionContext, "edit plan");
+  }
+
+  private void ensureCanEditOwnerScope(
+      Long ownerScopeId,
+      PlanPermissionContext permissionContext,
+      String action
+  ) {
+    if (!matchesScopeAction(ownerScopeId, permissionContext, this::hasEditAccess)) {
+      throw new AccessDeniedException("no permission to " + action);
+    }
+  }
+
+  private void ensureOwnerScopeChangeAllowed(
+      BizPlanEntity entity,
+      Long nextOwnerScopeId,
+      PlanPermissionContext permissionContext
+  ) {
+    if (Objects.equals(entity.getOwnerScopeId(), nextOwnerScopeId)) {
+      return;
+    }
+    if (!matchesScopeAction(entity.getOwnerScopeId(), permissionContext, this::hasManageAccess)) {
+      throw new AccessDeniedException("no permission to move plan to another owner scope");
+    }
+    ensureCanEditOwnerScope(nextOwnerScopeId, permissionContext, "move plan to selected scope");
+  }
+
+  private boolean matchesScopeAction(
+      Long scopeId,
+      PlanPermissionContext permissionContext,
+      Predicate<ResourceScopeMemberDto> predicate
+  ) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    ResourceScopeMemberDto member = permissionContext.memberships().get(String.valueOf(scopeId));
+    return member != null && predicate.test(member);
+  }
+
+  private boolean hasAnyOwnerAccess(Long scopeId, PlanPermissionContext permissionContext) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    ResourceScopeMemberDto member = permissionContext.memberships().get(String.valueOf(scopeId));
+    return member != null && (
+        flag(member.canView()) ||
+        flag(member.canCreate()) ||
+        flag(member.canEdit()) ||
+        flag(member.canDelete()) ||
+        flag(member.canManage())
+    );
+  }
+
+  private boolean hasViewAccess(String scopeId, PlanPermissionContext permissionContext) {
+    if (permissionContext.superAdmin()) {
+      return true;
+    }
+    ResourceScopeMemberDto member = permissionContext.memberships().get(scopeId);
+    return member != null && (flag(member.canView()) || flag(member.canManage()));
+  }
+
+  private boolean hasEditAccess(ResourceScopeMemberDto member) {
+    return flag(member.canEdit()) || flag(member.canManage());
+  }
+
+  private boolean hasManageAccess(ResourceScopeMemberDto member) {
+    return flag(member.canManage());
+  }
+
+  private boolean flag(Integer value) {
+    return Integer.valueOf(1).equals(value);
+  }
+
+  private boolean isSuperAdmin(CurrentUserPrincipal principal) {
+    return principal.roles().stream()
+        .map(String::toUpperCase)
+        .anyMatch(role -> "PLATFORM_ADMIN".equals(role) || "SUPER_ADMIN".equals(role));
   }
 
   private PlanDto toDto(
@@ -577,6 +725,12 @@ public class PlanService {
   private record PlanStatusContext(
       Map<Long, List<BizPlanItemEntity>> itemsByPlanId,
       Map<Long, String> statusByPlanId
+  ) {
+  }
+
+  private record PlanPermissionContext(
+      boolean superAdmin,
+      Map<String, ResourceScopeMemberDto> memberships
   ) {
   }
 }

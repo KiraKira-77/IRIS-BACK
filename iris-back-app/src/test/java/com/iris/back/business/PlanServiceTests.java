@@ -86,6 +86,25 @@ class PlanServiceTests {
   }
 
   @Test
+  void listIncludesGeneratedProjectInfoForPlanGeneratedProjects() {
+    mockCurrentUser();
+    BizPlanEntity plan = plan("9001", "PL-2026-001", "2026 annual control plan", "approved");
+    BizProjectEntity generatedProject = project("9201", "not_started", "none");
+    generatedProject.setPlanId(9001L);
+    generatedProject.setProjectName("2026 annual control project");
+    when(planMapper.selectList(any())).thenReturn(List.of(plan));
+    when(planItemMapper.selectList(any())).thenReturn(List.of());
+    when(projectMapper.selectList(any())).thenReturn(List.of(generatedProject));
+
+    var page = planService.list(new PlanListQuery(null, 2026, null, 1L, 10L));
+
+    assertThat(page.getRecords()).singleElement().satisfies(result -> {
+      assertThat(result.generatedProjectId()).isEqualTo("9201");
+      assertThat(result.generatedProjectName()).isEqualTo("2026 annual control project");
+    });
+  }
+
+  @Test
   void listReturnsOnlyPlansVisibleToCurrentUserResourceScopes() {
     mockCurrentUser(2004L, List.of("AUDITOR"));
     BizPlanEntity ownerVisible = plan("9001", "PL-2026-001", "Owner visible plan", "approved");

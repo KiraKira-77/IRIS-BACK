@@ -728,6 +728,7 @@ public class ProjectService {
   @Transactional
   public ProjectDto create(ProjectUpsertRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    ensurePlanCanGenerateProject(principal.tenantId(), request);
     List<Long> checklistIds = parseIds(request.checklistIds(), "PROJECT_CHECKLIST_ID_INVALID");
     List<BizChecklistEntity> checklists = loadChecklists(principal.tenantId(), checklistIds);
     List<BizChecklistItemEntity> checklistItems = loadChecklistItems(principal.tenantId(), checklistIds);
@@ -754,6 +755,19 @@ public class ProjectService {
     linkPlanItemsToProject(project, principal);
     recordProjectOperation(principal, project.getId(), null, null, "创建项目", "创建项目：" + project.getProjectName());
     return toDto(project, members, tasks);
+  }
+
+  private void ensurePlanCanGenerateProject(Long tenantId, ProjectUpsertRequest request) {
+    Long planId = parseNullableId(request.planId(), "PROJECT_PLAN_ID_INVALID");
+    if (planId == null || !"plan".equalsIgnoreCase(trimToNull(request.source()))) {
+      return;
+    }
+    Long existingCount = projectMapper.selectCount(new LambdaQueryWrapper<BizProjectEntity>()
+        .eq(BizProjectEntity::getTenantId, tenantId)
+        .eq(BizProjectEntity::getPlanId, planId));
+    if (existingCount != null && existingCount > 0) {
+      throw new BusinessException("PROJECT_PLAN_ALREADY_GENERATED", "PROJECT_PLAN_ALREADY_GENERATED");
+    }
   }
 
   private List<BizProjectMemberEntity> replaceMembers(

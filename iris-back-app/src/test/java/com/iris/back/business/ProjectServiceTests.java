@@ -799,6 +799,38 @@ class ProjectServiceTests {
   }
 
   @Test
+  void createRejectsDuplicateProjectGenerationForSamePlan() {
+    mockCurrentUser();
+    when(projectMapper.selectCount(any())).thenReturn(1L);
+
+    Assertions.assertThatThrownBy(() -> projectService.create(new ProjectUpsertRequest(
+        "PRJ-2026-001",
+        "2026 Monthly Finance Control Project",
+        "plan",
+        "9001",
+        "2026 January Control Plan",
+        "Finance controls",
+        "2026-04-27",
+        null,
+        List.of(),
+        List.of(),
+        "2001",
+        "Platform Administrator",
+        List.of("8801"),
+        List.of(new ProjectUpsertRequest.ProjectMemberRequest(
+            "2001",
+            "Platform Administrator",
+            "E2001",
+            "Finance",
+            "leader"
+        ))
+    )))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_PLAN_ALREADY_GENERATED");
+    verify(projectMapper, never()).insert(any(BizProjectEntity.class));
+  }
+
+  @Test
   void createUsesExplicitChecklistItemIdsAfterManualAdjustment() {
     mockCurrentUser();
     when(identifierGenerator.nextId(any()))

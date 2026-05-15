@@ -76,13 +76,15 @@ public class PlanService {
         principal.tenantId(),
         itemsByPlanId.values().stream().flatMap(List::stream).toList()
     );
+    Map<Long, BizProjectEntity> generatedProjectByPlanId = loadGeneratedProjectsByPlanId(principal.tenantId(), entities);
     Map<Long, String> statusByPlanId = deriveStatuses(entities, itemsByPlanId, projectById);
     PlanPermissionContext permissionContext = buildPermissionContext(principal);
     List<PlanDto> filtered = entities.stream()
         .map(entity -> toDto(
             entity,
             itemsByPlanId.getOrDefault(entity.getId(), List.of()),
-            statusByPlanId.getOrDefault(entity.getId(), normalizeStatus(entity.getStatus(), null))
+            statusByPlanId.getOrDefault(entity.getId(), normalizeStatus(entity.getStatus(), null)),
+            generatedProjectByPlanId.get(entity.getId())
         ))
         .filter(item -> canView(item, permissionContext))
         .filter(item -> matches(item, safeQuery))
@@ -105,23 +107,27 @@ public class PlanService {
   @Transactional
   public PlanDto create(PlanUpsertRequest request) {
     CurrentUserPrincipal principal = currentUserContext.requireCurrentUser();
+    Long requestedOwnerScopeId = parseId(normalizeRequiredText(request.ownerScopeId(), "PLAN_OWNER_SCOPE_REQUIRED"),
+        "PLAN_OWNER_SCOPE_INVALID");
+    PlanPermissionContext permissionContext = buildPermissionContext(principal);
+    Long requestedParentId = parseNullableId(request.parentId(), "PLAN_PARENT_ID_INVALID");
+    if (requestedParentId != null) {
+      BizPlanEntity parent = requirePlan(requestedParentId, principal.tenantId());
+      ensureCanEditOwnerScope(parent.getOwnerScopeId(), permissionContext, "create child plan");
+    }
+    ensureCanEditOwnerScope(requestedOwnerScopeId, permissionContext, "create plan in selected scope");
+
     BizPlanEntity entity = new BizPlanEntity();
     entity.setId(nextId(entity));
     entity.setTenantId(principal.tenantId());
     applyFields(entity, request, true);
-    PlanPermissionContext permissionContext = buildPermissionContext(principal);
-    ensureCanEditOwnerScope(entity.getOwnerScopeId(), permissionContext, "create plan in selected scope");
-    if (entity.getParentId() != null) {
-      BizPlanEntity parent = requirePlan(entity.getParentId(), principal.tenantId());
-      ensureCanEditOwnerScope(parent.getOwnerScopeId(), permissionContext, "create child plan");
-    }
     entity.setDeleted(0);
     entity.setVersion(0L);
     entity.setCreatedBy(principal.userId());
     entity.setUpdatedBy(principal.userId());
     planMapper.insert(entity);
     List<BizPlanItemEntity> items = replaceItems(entity.getId(), principal, request.items());
-    return toDto(entity, items, deriveLeafStatus(entity, items, loadProjects(principal.tenantId(), items)));
+    return toDto(entity, items, deriveLeafStatus(entity, items, loadProjects(principal.tenantId(), items)), null);
   }
 
   @Transactional
@@ -287,6 +293,20 @@ public class PlanService {
         .collect(Collectors.toMap(BizProjectEntity::getId, Function.identity(), (left, right) -> left));
   }
 
+  private Map<Long, BizProjectEntity> loadGeneratedProjectsByPlanId(Long tenantId, List<BizPlanEntity> plans) {
+    if (plans.isEmpty()) {
+      return Map.of();
+    }
+    List<Long> planIds = plans.stream().map(BizPlanEntity::getId).toList();
+    List<BizProjectEntity> projects = nullToList(projectMapper.selectList(new LambdaQueryWrapper<BizProjectEntity>()
+        .eq(BizProjectEntity::getTenantId, tenantId)
+        .in(BizProjectEntity::getPlanId, planIds)
+        .orderByAsc(BizProjectEntity::getId)));
+    return projects.stream()
+        .filter(project -> project.getPlanId() != null)
+        .collect(Collectors.toMap(BizProjectEntity::getPlanId, Function.identity(), (left, right) -> left));
+  }
+
   private boolean matches(PlanDto item, PlanListQuery query) {
     String keyword = trimToNull(query.keyword());
     String status = trimToNull(query.status());
@@ -435,14 +455,16 @@ public class PlanService {
     return toDto(
         entity,
         statusContext.itemsByPlanId().getOrDefault(entity.getId(), List.of()),
-        statusContext.statusByPlanId().getOrDefault(entity.getId(), normalizeStatus(entity.getStatus(), null))
+        statusContext.statusByPlanId().getOrDefault(entity.getId(), normalizeStatus(entity.getStatus(), null)),
+        statusContext.generatedProjectByPlanId().get(entity.getId())
     );
   }
 
   private PlanDto toDto(
       BizPlanEntity entity,
       List<BizPlanItemEntity> items,
-      String status
+      String status,
+      BizProjectEntity generatedProject
   ) {
     List<BizPlanItemEntity> sortedItems = items.stream()
         .sorted(Comparator.comparing(BizPlanItemEntity::getSequenceNo, Comparator.nullsLast(Integer::compareTo))
@@ -464,6 +486,8 @@ public class PlanService {
         sortedItems.stream().map(this::toItemDto).toList(),
         entity.getParentId() == null ? null : String.valueOf(entity.getParentId()),
         List.of(),
+        generatedProject == null ? null : String.valueOf(generatedProject.getId()),
+        generatedProject == null ? null : generatedProject.getProjectName(),
         entity.getCreatedBy() == null ? null : String.valueOf(entity.getCreatedBy()),
         entity.getApprovedBy() == null ? null : String.valueOf(entity.getApprovedBy()),
         DateTimeFormatters.formatDateTime(entity.getCreatedAt()),
@@ -482,7 +506,11 @@ public class PlanService {
         tenantId,
         itemsByPlanId.values().stream().flatMap(List::stream).toList()
     );
-    return new PlanStatusContext(itemsByPlanId, deriveStatuses(plans, itemsByPlanId, projectById));
+    return new PlanStatusContext(
+        itemsByPlanId,
+        deriveStatuses(plans, itemsByPlanId, projectById),
+        loadGeneratedProjectsByPlanId(tenantId, plans)
+    );
   }
 
   private Set<Long> collectPlanSubtreeIds(Long rootPlanId, List<BizPlanEntity> plans) {
@@ -724,7 +752,8 @@ public class PlanService {
 
   private record PlanStatusContext(
       Map<Long, List<BizPlanItemEntity>> itemsByPlanId,
-      Map<Long, String> statusByPlanId
+      Map<Long, String> statusByPlanId,
+      Map<Long, BizProjectEntity> generatedProjectByPlanId
   ) {
   }
 

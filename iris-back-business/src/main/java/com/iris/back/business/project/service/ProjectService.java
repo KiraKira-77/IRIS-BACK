@@ -11,6 +11,8 @@ import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.checklist.model.entity.BizChecklistEntity;
 import com.iris.back.business.checklist.model.entity.BizChecklistItemEntity;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
+import com.iris.back.business.plan.mapper.BizPlanMapper;
+import com.iris.back.business.plan.model.entity.BizPlanEntity;
 import com.iris.back.business.plan.model.entity.BizPlanItemEntity;
 import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
 import com.iris.back.business.project.mapper.BizProjectMapper;
@@ -46,6 +48,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -69,6 +72,7 @@ public class ProjectService {
   private final BizChecklistMapper checklistMapper;
   private final BizChecklistItemMapper checklistItemMapper;
   private final BizPlanItemMapper planItemMapper;
+  private final BizPlanMapper planMapper;
   private final CurrentUserContext currentUserContext;
   private final IdentifierGenerator identifierGenerator;
   private final OmsClient omsClient;
@@ -85,6 +89,7 @@ public class ProjectService {
       BizChecklistMapper checklistMapper,
       BizChecklistItemMapper checklistItemMapper,
       BizPlanItemMapper planItemMapper,
+      BizPlanMapper planMapper,
       CurrentUserContext currentUserContext,
       IdentifierGenerator identifierGenerator,
       OmsClient omsClient,
@@ -100,6 +105,7 @@ public class ProjectService {
     this.checklistMapper = checklistMapper;
     this.checklistItemMapper = checklistItemMapper;
     this.planItemMapper = planItemMapper;
+    this.planMapper = planMapper;
     this.currentUserContext = currentUserContext;
     this.identifierGenerator = identifierGenerator;
     this.omsClient = omsClient;
@@ -725,6 +731,8 @@ public class ProjectService {
     List<Long> checklistIds = parseIds(request.checklistIds(), "PROJECT_CHECKLIST_ID_INVALID");
     List<BizChecklistEntity> checklists = loadChecklists(principal.tenantId(), checklistIds);
     List<BizChecklistItemEntity> checklistItems = loadChecklistItems(principal.tenantId(), checklistIds);
+    BizPlanEntity linkedPlan = loadProjectPlan(principal.tenantId(), request.planId());
+    checklistItems = resolveChecklistItemsForProject(request, checklistItems, linkedPlan);
     if (checklistItems.isEmpty()) {
       throw new BusinessException("PROJECT_CHECKLIST_ITEMS_REQUIRED", "project requires checklist items");
     }
@@ -843,6 +851,124 @@ public class ProjectService {
           return task;
         })
         .toList();
+  }
+
+  private List<BizChecklistItemEntity> resolveChecklistItemsForProject(
+      ProjectUpsertRequest request,
+      List<BizChecklistItemEntity> checklistItems,
+      BizPlanEntity linkedPlan
+  ) {
+    List<Long> selectedItemIds = parseOptionalIds(request.checklistItemIds(), "PROJECT_CHECKLIST_ITEM_ID_INVALID");
+    if (!selectedItemIds.isEmpty()) {
+      return selectChecklistItemsByIds(checklistItems, selectedItemIds);
+    }
+
+    String generationMode = normalizeChecklistGenerationMode(request.checklistGenerationMode(), linkedPlan);
+    return switch (generationMode) {
+      case "periodic" -> filterChecklistItemsByPlanCycle(
+          checklistItems,
+          linkedPlan == null ? null : linkedPlan.getCycle()
+      );
+      case "random" -> randomlySelectChecklistItems(checklistItems, request.randomCount());
+      default -> checklistItems;
+    };
+  }
+
+  private List<BizChecklistItemEntity> selectChecklistItemsByIds(
+      List<BizChecklistItemEntity> checklistItems,
+      List<Long> selectedItemIds
+  ) {
+    Map<Long, BizChecklistItemEntity> itemById = checklistItems.stream()
+        .collect(Collectors.toMap(BizChecklistItemEntity::getId, Function.identity(), (left, right) -> left));
+    List<BizChecklistItemEntity> selectedItems = selectedItemIds.stream()
+        .map(itemById::get)
+        .filter(Objects::nonNull)
+        .toList();
+    if (selectedItems.size() != selectedItemIds.size()) {
+      throw new BusinessException("PROJECT_CHECKLIST_ITEM_ID_INVALID", "PROJECT_CHECKLIST_ITEM_ID_INVALID");
+    }
+    return selectedItems;
+  }
+
+  private String normalizeChecklistGenerationMode(String generationMode, BizPlanEntity linkedPlan) {
+    String normalized = trimToNull(generationMode);
+    if (normalized == null) {
+      return linkedPlan == null ? "full" : "periodic";
+    }
+    normalized = normalized.toLowerCase(Locale.ROOT);
+    if (!Set.of("full", "periodic", "random").contains(normalized)) {
+      throw new BusinessException("PROJECT_CHECKLIST_GENERATION_MODE_INVALID", "PROJECT_CHECKLIST_GENERATION_MODE_INVALID");
+    }
+    return normalized;
+  }
+
+  private List<BizChecklistItemEntity> randomlySelectChecklistItems(
+      List<BizChecklistItemEntity> checklistItems,
+      Integer randomCount
+  ) {
+    int count = randomCount == null ? 0 : randomCount;
+    if (count <= 0) {
+      throw new BusinessException("PROJECT_CHECKLIST_RANDOM_COUNT_INVALID", "PROJECT_CHECKLIST_RANDOM_COUNT_INVALID");
+    }
+    if (count >= checklistItems.size()) {
+      return checklistItems;
+    }
+    List<BizChecklistItemEntity> shuffled = checklistItems.stream().collect(Collectors.toList());
+    Collections.shuffle(shuffled);
+    return shuffled.stream().limit(count).toList();
+  }
+
+  private BizPlanEntity loadProjectPlan(Long tenantId, String planId) {
+    Long parsedPlanId = parseNullableId(planId, "PROJECT_PLAN_ID_INVALID");
+    if (parsedPlanId == null) {
+      return null;
+    }
+    return planMapper.selectOne(new LambdaQueryWrapper<BizPlanEntity>()
+        .eq(BizPlanEntity::getTenantId, tenantId)
+        .eq(BizPlanEntity::getId, parsedPlanId));
+  }
+
+  private List<BizChecklistItemEntity> filterChecklistItemsByPlanCycle(
+      List<BizChecklistItemEntity> checklistItems,
+      String planCycle
+  ) {
+    Integer planRank = planCycleRank(planCycle);
+    if (planRank == null) {
+      return checklistItems;
+    }
+    return checklistItems.stream()
+        .filter(item -> {
+          Integer frequencyRank = controlFrequencyRank(item.getControlFrequency());
+          return frequencyRank != null && frequencyRank <= planRank;
+        })
+        .toList();
+  }
+
+  private Integer planCycleRank(String planCycle) {
+    return switch (normalizeFrequencyKey(planCycle)) {
+      case "monthly", "月度" -> 4;
+      case "quarterly", "季度" -> 5;
+      case "half-yearly", "half_yearly", "半年度" -> 6;
+      case "yearly", "年度" -> 7;
+      default -> null;
+    };
+  }
+
+  private Integer controlFrequencyRank(String controlFrequency) {
+    return switch (normalizeFrequencyKey(controlFrequency)) {
+      case "per_occurrence", "每次发生" -> 0;
+      case "daily", "每日" -> 1;
+      case "weekly", "每周" -> 2;
+      case "monthly", "每月" -> 4;
+      case "quarterly", "每季度" -> 5;
+      case "half-yearly", "half_yearly", "每半年度" -> 6;
+      case "yearly", "每年度" -> 7;
+      default -> null;
+    };
+  }
+
+  private String normalizeFrequencyKey(String value) {
+    return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
   }
 
   private void linkPlanItemsToProject(BizProjectEntity project, CurrentUserPrincipal principal) {
@@ -1708,6 +1834,16 @@ public class ProjectService {
   private List<Long> parseIds(List<String> ids, String code) {
     if (ids == null || ids.isEmpty()) {
       throw new BusinessException(code, code);
+    }
+    return ids.stream()
+        .map(value -> parseId(value, code))
+        .distinct()
+        .toList();
+  }
+
+  private List<Long> parseOptionalIds(List<String> ids, String code) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
     }
     return ids.stream()
         .map(value -> parseId(value, code))

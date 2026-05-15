@@ -244,15 +244,15 @@ class ChecklistServiceTests {
   }
 
   @Test
-  void updateRebuildsItemsWithFreshIdsWhenExistingItemIdsAreSubmitted() {
+  void updatePreservesExistingItemIdsAndOnlyGeneratesIdsForNewItems() {
     mockCurrentUser();
     BizChecklistEntity existing = checklist("8801", "CL-2026-001", "资金活动内控检查清单");
     existing.setOwnerScopeId(9001L);
     existing.setStatus("active");
     when(checklistMapper.selectById(8801L)).thenReturn(existing);
+    when(checklistItemMapper.selectList(any())).thenReturn(List.of(item("9901", "8801")));
     when(identifierGenerator.nextId(any()))
-        .thenReturn(9902L)
-        .thenReturn(9903L);
+        .thenReturn(9902L);
 
     var updated = checklistService.update("8801", new ChecklistUpsertRequest(
         "CL-2026-001",
@@ -284,14 +284,13 @@ class ChecklistServiceTests {
     ));
 
     ArgumentCaptor<BizChecklistItemEntity> itemCaptor = ArgumentCaptor.forClass(BizChecklistItemEntity.class);
-    verify(checklistItemMapper, times(2)).insert(itemCaptor.capture());
+    verify(checklistItemMapper).updateById(itemCaptor.capture());
 
-    assertThat(itemCaptor.getAllValues())
-        .extracting(BizChecklistItemEntity::getId)
-        .containsExactly(9902L, 9903L);
+    assertThat(itemCaptor.getValue().getId()).isEqualTo(9901L);
+    assertThat(itemCaptor.getValue().getContent()).isEqualTo("银行对账是否及时完成");
     assertThat(updated.items())
         .extracting(item -> item.id())
-        .containsExactly("9902", "9903");
+        .containsExactly("9901", "9902");
   }
 
   private BizChecklistEntity checklist(String id, String code, String name) {

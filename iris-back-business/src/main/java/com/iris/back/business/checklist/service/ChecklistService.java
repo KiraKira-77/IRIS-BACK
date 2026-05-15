@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.springframework.security.access.AccessDeniedException;
@@ -176,20 +178,38 @@ public class ChecklistService {
       CurrentUserPrincipal principal,
       List<ChecklistItemUpsertRequest> requests
   ) {
-    checklistItemMapper.delete(new LambdaQueryWrapper<BizChecklistItemEntity>()
-        .eq(BizChecklistItemEntity::getTenantId, principal.tenantId())
-        .eq(BizChecklistItemEntity::getChecklistId, checklistId));
+    Map<Long, BizChecklistItemEntity> existingItemsById = listItems(principal.tenantId(), checklistId)
+        .stream()
+        .collect(Collectors.toMap(BizChecklistItemEntity::getId, Function.identity(), (left, right) -> left));
     if (requests == null || requests.isEmpty()) {
+      if (!existingItemsById.isEmpty()) {
+        checklistItemMapper.delete(new LambdaQueryWrapper<BizChecklistItemEntity>()
+            .eq(BizChecklistItemEntity::getTenantId, principal.tenantId())
+            .eq(BizChecklistItemEntity::getChecklistId, checklistId));
+      }
       return List.of();
     }
 
     List<BizChecklistItemEntity> items = new java.util.ArrayList<>();
+    Set<Long> submittedExistingIds = new java.util.HashSet<>();
     for (int index = 0; index < requests.size(); index++) {
       ChecklistItemUpsertRequest request = requests.get(index);
-      BizChecklistItemEntity item = new BizChecklistItemEntity();
-      item.setId(nextId(item));
-      item.setTenantId(principal.tenantId());
-      item.setChecklistId(checklistId);
+      Long requestItemId = parseNullableItemId(request.id());
+      BizChecklistItemEntity item = requestItemId == null ? null : existingItemsById.get(requestItemId);
+      boolean existingItem = item != null;
+
+      if (!existingItem) {
+        item = new BizChecklistItemEntity();
+        item.setId(nextId(item));
+        item.setTenantId(principal.tenantId());
+        item.setChecklistId(checklistId);
+        item.setDeleted(0);
+        item.setVersion(0L);
+        item.setCreatedBy(principal.userId());
+      } else {
+        submittedExistingIds.add(item.getId());
+      }
+
       item.setSequenceNo(index + 1);
       item.setContent(normalizeRequiredText(request.content(), "CHECKLIST_ITEM_CONTENT_REQUIRED"));
       item.setCriterion(normalizeRequiredText(request.criterion(), "CHECKLIST_ITEM_CRITERION_REQUIRED"));
@@ -199,12 +219,24 @@ public class ChecklistService {
       ));
       item.setEvaluationType(normalizeRequiredText(request.evaluationType(), "CHECKLIST_ITEM_EVALUATION_TYPE_REQUIRED"));
       item.setOrganizationIds(joinCsv(request.organizationIds()));
-      item.setDeleted(0);
-      item.setVersion(0L);
-      item.setCreatedBy(principal.userId());
       item.setUpdatedBy(principal.userId());
-      checklistItemMapper.insert(item);
+      if (existingItem) {
+        checklistItemMapper.updateById(item);
+      } else {
+        checklistItemMapper.insert(item);
+      }
       items.add(item);
+    }
+
+    List<Long> removedItemIds = existingItemsById.keySet()
+        .stream()
+        .filter(id -> !submittedExistingIds.contains(id))
+        .toList();
+    if (!removedItemIds.isEmpty()) {
+      checklistItemMapper.delete(new LambdaQueryWrapper<BizChecklistItemEntity>()
+          .eq(BizChecklistItemEntity::getTenantId, principal.tenantId())
+          .eq(BizChecklistItemEntity::getChecklistId, checklistId)
+          .in(BizChecklistItemEntity::getId, removedItemIds));
     }
     return items;
   }
@@ -416,6 +448,11 @@ public class ChecklistService {
     } catch (NumberFormatException exception) {
       throw new BusinessException("CHECKLIST_ID_INVALID", "invalid checklist id: " + id);
     }
+  }
+
+  private Long parseNullableItemId(String id) {
+    String normalized = trimToNull(id);
+    return normalized == null ? null : parseId(normalized);
   }
 
   private LocalDate parseDateOrToday(String date) {

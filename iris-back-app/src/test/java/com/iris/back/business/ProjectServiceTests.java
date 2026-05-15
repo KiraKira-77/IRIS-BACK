@@ -15,6 +15,8 @@ import com.iris.back.business.checklist.mapper.BizChecklistMapper;
 import com.iris.back.business.checklist.model.entity.BizChecklistEntity;
 import com.iris.back.business.checklist.model.entity.BizChecklistItemEntity;
 import com.iris.back.business.plan.mapper.BizPlanItemMapper;
+import com.iris.back.business.plan.mapper.BizPlanMapper;
+import com.iris.back.business.plan.model.entity.BizPlanEntity;
 import com.iris.back.business.plan.model.entity.BizPlanItemEntity;
 import com.iris.back.business.project.mapper.BizProjectMapper;
 import com.iris.back.business.project.mapper.BizProjectArchiveMapper;
@@ -85,6 +87,9 @@ class ProjectServiceTests {
   private BizPlanItemMapper planItemMapper;
 
   @Mock
+  private BizPlanMapper planMapper;
+
+  @Mock
   private CurrentUserContext currentUserContext;
 
   @Mock
@@ -110,6 +115,7 @@ class ProjectServiceTests {
         checklistMapper,
         checklistItemMapper,
         planItemMapper,
+        planMapper,
         currentUserContext,
         identifierGenerator,
         omsClient,
@@ -742,6 +748,136 @@ class ProjectServiceTests {
     ArgumentCaptor<BizPlanItemEntity> planItemCaptor = ArgumentCaptor.forClass(BizPlanItemEntity.class);
     verify(planItemMapper).update(planItemCaptor.capture(), any());
     assertThat(planItemCaptor.getValue().getProjectId()).isEqualTo("7001");
+  }
+
+  @Test
+  void createFromPlanFiltersChecklistItemsByPlanCycle() {
+    mockCurrentUser();
+    when(identifierGenerator.nextId(any()))
+        .thenReturn(7001L)
+        .thenReturn(7101L)
+        .thenReturn(7201L)
+        .thenReturn(7202L);
+    when(checklistMapper.selectList(any())).thenReturn(List.of(checklist()));
+    when(checklistItemMapper.selectList(any())).thenReturn(List.of(
+        checklistItem(9901L, "Incident approval", "Review every occurrence", "per_occurrence"),
+        checklistItem(9902L, "Monthly reconciliation", "Review monthly", "monthly"),
+        checklistItem(9903L, "Quarterly review", "Review quarterly", "quarterly"),
+        checklistItem(9904L, "Annual review", "Review yearly", "yearly")
+    ));
+    when(planMapper.selectOne(any())).thenReturn(plan(9001L, "monthly"));
+
+    ProjectDto created = projectService.create(new ProjectUpsertRequest(
+        "PRJ-2026-001",
+        "2026 Monthly Finance Control Project",
+        "plan",
+        "9001",
+        "2026 January Control Plan",
+        "Finance controls",
+        "2026-04-27",
+        null,
+        List.of(),
+        List.of(),
+        "2001",
+        "Platform Administrator",
+        List.of("8801"),
+        List.of(new ProjectUpsertRequest.ProjectMemberRequest(
+            "2001",
+            "Platform Administrator",
+            "E2001",
+            "Finance",
+            "leader"
+        ))
+    ));
+
+    ArgumentCaptor<BizProjectTaskEntity> taskCaptor = ArgumentCaptor.forClass(BizProjectTaskEntity.class);
+    verify(projectTaskMapper, times(2)).insert(taskCaptor.capture());
+    assertThat(created.taskCount()).isEqualTo(2);
+    assertThat(taskCaptor.getAllValues())
+        .extracting(BizProjectTaskEntity::getChecklistItemId)
+        .containsExactly(9901L, 9902L);
+  }
+
+  @Test
+  void createUsesExplicitChecklistItemIdsAfterManualAdjustment() {
+    mockCurrentUser();
+    when(identifierGenerator.nextId(any()))
+        .thenReturn(7001L)
+        .thenReturn(7101L)
+        .thenReturn(7201L);
+    when(checklistMapper.selectList(any())).thenReturn(List.of(checklist()));
+    when(checklistItemMapper.selectList(any())).thenReturn(List.of(
+        checklistItem(9901L, "Bank reconciliation", "Complete by the 5th day"),
+        checklistItem(9902L, "Payment approval", "Complete maker checker approval")
+    ));
+
+    ProjectDto created = projectService.create(new ProjectUpsertRequest(
+        "PRJ-2026-001",
+        "2026 Finance Control Project",
+        "manual",
+        null,
+        null,
+        "Finance controls",
+        "2026-04-27",
+        null,
+        List.of(),
+        List.of(),
+        "2001",
+        "Platform Administrator",
+        List.of("8801"),
+        List.of(new ProjectUpsertRequest.ProjectMemberRequest(
+            "2001",
+            "Platform Administrator",
+            "E2001",
+            "Finance",
+            "leader"
+        )),
+        "full",
+        null,
+        List.of("9902")
+    ));
+
+    ArgumentCaptor<BizProjectTaskEntity> taskCaptor = ArgumentCaptor.forClass(BizProjectTaskEntity.class);
+    verify(projectTaskMapper, times(1)).insert(taskCaptor.capture());
+    assertThat(created.taskCount()).isEqualTo(1);
+    assertThat(taskCaptor.getValue().getChecklistItemId()).isEqualTo(9902L);
+  }
+
+  @Test
+  void createRejectsExplicitChecklistItemIdsOutsideSelectedChecklists() {
+    mockCurrentUser();
+    when(checklistMapper.selectList(any())).thenReturn(List.of(checklist()));
+    when(checklistItemMapper.selectList(any())).thenReturn(List.of(
+        checklistItem(9901L, "Bank reconciliation", "Complete by the 5th day")
+    ));
+
+    Assertions.assertThatThrownBy(() -> projectService.create(new ProjectUpsertRequest(
+        "PRJ-2026-001",
+        "2026 Finance Control Project",
+        "manual",
+        null,
+        null,
+        "Finance controls",
+        "2026-04-27",
+        null,
+        List.of(),
+        List.of(),
+        "2001",
+        "Platform Administrator",
+        List.of("8801"),
+        List.of(new ProjectUpsertRequest.ProjectMemberRequest(
+            "2001",
+            "Platform Administrator",
+            "E2001",
+            "Finance",
+            "leader"
+        )),
+        "full",
+        null,
+        List.of("9999")
+    )))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("PROJECT_CHECKLIST_ITEM_ID_INVALID");
   }
 
   @Test
@@ -1516,14 +1652,30 @@ class ProjectServiceTests {
   }
 
   private BizChecklistItemEntity checklistItem(Long id, String content, String criterion) {
+    return checklistItem(id, content, criterion, "monthly");
+  }
+
+  private BizChecklistItemEntity checklistItem(Long id, String content, String criterion, String controlFrequency) {
     BizChecklistItemEntity entity = new BizChecklistItemEntity();
     entity.setId(id);
     entity.setTenantId(1001L);
     entity.setChecklistId(8801L);
     entity.setContent(content);
     entity.setCriterion(criterion);
-    entity.setControlFrequency("monthly");
+    entity.setControlFrequency(controlFrequency);
     entity.setEvaluationType("operation");
+    return entity;
+  }
+
+  private BizPlanEntity plan(Long id, String cycle) {
+    BizPlanEntity entity = new BizPlanEntity();
+    entity.setId(id);
+    entity.setTenantId(1001L);
+    entity.setPlanName("Control Plan " + id);
+    entity.setCycle(cycle);
+    entity.setPlanYear(2026);
+    entity.setPeriod("M1");
+    entity.setStatus("approved");
     return entity;
   }
 

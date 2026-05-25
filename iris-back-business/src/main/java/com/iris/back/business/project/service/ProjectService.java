@@ -679,8 +679,11 @@ public class ProjectService {
     workOrder.setLastSyncedAt(LocalDateTime.now());
     workOrder.setSyncError(null);
     workOrder.setUpdatedBy(principal.userId());
-    if (snapshot.reviewable() && workOrder.getCompletedAt() == null) {
+    boolean completedOrArchived = isCompletedOrArchivedOmsSnapshot(snapshot);
+    if (completedOrArchived && workOrder.getCompletedAt() == null) {
       workOrder.setCompletedAt(LocalDateTime.now());
+    } else if (!completedOrArchived) {
+      workOrder.setCompletedAt(null);
     }
   }
 
@@ -1869,6 +1872,13 @@ public class ProjectService {
     return "已归档".equals(normalized)
         || "30".equals(normalized)
         || "archived".equalsIgnoreCase(normalized);
+  }
+
+  private boolean isCompletedOrArchivedOmsSnapshot(OmsClient.OmsWorkOrderSnapshot snapshot) {
+    return isCompletedOmsStatusText(snapshot.omsStatusName())
+        || isCompletedOmsStatusText(snapshot.omsStatus())
+        || isArchivedOmsStatusText(snapshot.omsStatusName())
+        || isArchivedOmsStatusText(snapshot.omsStatus());
   }
 
   private boolean isWorkOrderReviewable(BizProjectTaskWorkOrderEntity workOrder) {

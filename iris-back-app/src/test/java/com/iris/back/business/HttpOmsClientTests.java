@@ -132,6 +132,24 @@ class HttpOmsClientTests {
   }
 
   @Test
+  void searchUsersCallsQueryUserListAndMapsOmsUserFields() throws Exception {
+    List<OmsClient.OmsUser> users = client.searchUsers("张", 1, 20);
+
+    assertThat(requests.get(0).path()).isEqualTo("/je/jolywood-it/itsm/internal-control/queryUserList");
+    JsonNode body = objectMapper.readTree(requests.get(0).body());
+    assertThat(body.get("keyword").asText()).isEqualTo("张");
+    assertThat(body.get("pageNum").asInt()).isEqualTo(1);
+    assertThat(body.get("pageSize").asInt()).isEqualTo(20);
+    assertThat(users).hasSize(2);
+    assertThat(users.get(0).userId()).isEqualTo("7512d4fbfff0494d80ff1e6d4d06cfa8");
+    assertThat(users.get(0).userCode()).isEqualTo("00336276");
+    assertThat(users.get(0).userName()).isEqualTo("徐家杰");
+    assertThat(users.get(1).userId()).isEqualTo("USER-ZHANG");
+    assertThat(users.get(1).userCode()).isEqualTo("00326891");
+    assertThat(users.get(1).userName()).isEqualTo("张弘");
+  }
+
+  @Test
   void createWorkOrdersPropagatesOmsFailureMessage() {
     assertThatThrownBy(() -> client.createWorkOrders(
         task(),
@@ -187,6 +205,9 @@ class HttpOmsClientTests {
           """;
       case "/je/jolywood-it/itsm/internal-control/task/back" -> """
           {"success":true,"data":true}
+          """;
+      case "/je/jolywood-it/itsm/internal-control/queryUserList" -> """
+          {"code":"1000","data":{"pageNum":1,"pageSize":20,"list":[{"USER_ID":"7512d4fbfff0494d80ff1e6d4d06cfa8","USER_CODE":"00336276","USER_NAME":"徐家杰"},{"USER_ID":"USER-ZHANG","USER_CODE":"00326891","USER_NAME":"张弘"}]}}
           """;
       default -> throw new IllegalArgumentException("Unexpected path " + path);
     };

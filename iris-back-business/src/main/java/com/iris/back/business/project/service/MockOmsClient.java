@@ -60,6 +60,15 @@ public class MockOmsClient implements OmsClient {
   }
 
   @Override
+  public List<OmsUser> searchUsers(String keyword, int pageNum, int pageSize) {
+    String normalized = keyword == null ? "" : keyword.trim();
+    return List.of(
+        new OmsUser("MOCK-USER-001", "00326891", normalized.isBlank() ? "张弘" : normalized),
+        new OmsUser("MOCK-USER-002", "00324265", "俞丽婷")
+    );
+  }
+
+  @Override
   public void returnWorkOrder(String omsWorkOrderId, String reason) {
     // Mock mode accepts the return command and exposes the refreshed state through getWorkOrder.
   }

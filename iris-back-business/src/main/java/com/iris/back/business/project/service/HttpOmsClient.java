@@ -126,6 +126,35 @@ public class HttpOmsClient implements OmsClient {
   }
 
   @Override
+  public List<OmsUser> searchUsers(String keyword, int pageNum, int pageSize) {
+    Map<String, Object> payload = new LinkedHashMap<>();
+    payload.put("keyword", keyword == null ? "" : keyword.trim());
+    payload.put("pageNum", Math.max(pageNum, 1));
+    payload.put("pageSize", Math.max(pageSize, 1));
+
+    JsonNode data = post(QUERY_USER_PATH, payload);
+    JsonNode rows = data.has("list") ? data.get("list") : data;
+    if (!rows.isArray()) {
+      return List.of();
+    }
+
+    List<OmsUser> users = new ArrayList<>();
+    for (JsonNode row : rows) {
+      String userCode = firstText(row, "USER_CODE", "userCode", "employeeNo", "account");
+      String userName = firstText(row, "USER_NAME", "userName", "name");
+      if (userCode == null || userName == null) {
+        continue;
+      }
+      users.add(new OmsUser(
+          firstNonBlank(firstText(row, "USER_ID", "userId", "id"), userCode),
+          userCode,
+          userName
+      ));
+    }
+    return users;
+  }
+
+  @Override
   public void returnWorkOrder(String omsWorkOrderId, String reason) {
     post(BACK_PATH, Map.of("taskId", omsWorkOrderId, "remark", reason));
   }
@@ -173,7 +202,7 @@ public class HttpOmsClient implements OmsClient {
     JsonNode code = root.get("code");
     if (code != null && !code.isNull()) {
       String value = code.asText();
-      if (!value.isBlank() && !Set.of("0", "200", "success", "SUCCESS").contains(value)) {
+      if (!value.isBlank() && !Set.of("0", "200", "1000", "success", "SUCCESS").contains(value)) {
         throw new BusinessException("PROJECT_OMS_RESPONSE_FAILED", omsErrorMessage(root, "PROJECT_OMS_RESPONSE_FAILED"));
       }
     }

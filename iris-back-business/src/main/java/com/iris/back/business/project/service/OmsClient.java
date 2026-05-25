@@ -16,6 +16,8 @@ public interface OmsClient {
 
   List<OmsAttachmentSnapshot> getWorkOrderAttachments(String omsWorkOrderId);
 
+  List<OmsUser> searchUsers(String keyword, int pageNum, int pageSize);
+
   void returnWorkOrder(String omsWorkOrderId, String reason);
 
   record OmsCreateCommand(
@@ -63,6 +65,13 @@ public interface OmsClient {
       String attachmentId,
       String fileName,
       String url
+  ) {
+  }
+
+  record OmsUser(
+      String userId,
+      String userCode,
+      String userName
   ) {
   }
 }

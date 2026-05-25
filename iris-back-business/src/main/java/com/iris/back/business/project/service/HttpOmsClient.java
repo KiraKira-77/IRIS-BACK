@@ -18,6 +18,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
@@ -26,11 +28,14 @@ import org.springframework.stereotype.Service;
 @ConditionalOnProperty(name = "iris.oms.mode", havingValue = "http")
 public class HttpOmsClient implements OmsClient {
 
+  private static final Logger log = LoggerFactory.getLogger(HttpOmsClient.class);
+
   // OMS 侧由工单系统提供的内控任务接口，baseUrl 只配置到 /je/jolywood-it。
   private static final String CREATE_PATH = "/itsm/internal-control/task/create";
   private static final String DETAIL_PATH = "/itsm/internal-control/task/detail";
   private static final String LOGS_PATH = "/itsm/internal-control/task/logs";
   private static final String BACK_PATH = "/itsm/internal-control/task/back";
+  private static final String QUERY_USER_PATH = "/itsm/internal-control/task/queryUserList";
   // OMS 状态码 20/25/30 表示内控侧可以进入复核处理，后续如 OMS 状态枚举变化需同步调整。
   private static final Set<String> REVIEWABLE_STATUSES = Set.of("20", "25", "30");
 
@@ -128,12 +133,14 @@ public class HttpOmsClient implements OmsClient {
   private JsonNode post(String path, Map<String, Object> payload) {
     try {
       String body = objectMapper.writeValueAsString(payload);
+      log.info("OMS request path={} payload={}", path, truncate(body));
       HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + path))
           .timeout(timeout)
           .header("Content-Type", "application/json; charset=utf-8")
           .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
           .build();
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      log.info("OMS response path={} status={} body={}", path, response.statusCode(), truncate(response.body()));
       JsonNode root = objectMapper.readTree(response.body());
       if (response.statusCode() < 200 || response.statusCode() >= 300) {
         // HTTP 层失败也尽量透传 OMS 响应体里的中文错误，方便前端直接展示真实失败原因。
@@ -142,11 +149,14 @@ public class HttpOmsClient implements OmsClient {
       ensureSuccess(root);
       return root.has("data") ? root.get("data") : root;
     } catch (JsonProcessingException exception) {
+      log.error("OMS JSON processing failed path={} payload={}", path, payload, exception);
       throw new BusinessException("PROJECT_OMS_PAYLOAD_SERIALIZE_FAILED", "PROJECT_OMS_PAYLOAD_SERIALIZE_FAILED");
     } catch (IOException exception) {
+      log.error("OMS HTTP failed path={} payload={}", path, payload, exception);
       throw new BusinessException("PROJECT_OMS_HTTP_FAILED", "PROJECT_OMS_HTTP_FAILED");
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
+      log.error("OMS HTTP interrupted path={} payload={}", path, payload, exception);
       throw new BusinessException("PROJECT_OMS_HTTP_INTERRUPTED", "PROJECT_OMS_HTTP_INTERRUPTED");
     }
   }
@@ -242,5 +252,12 @@ public class HttpOmsClient implements OmsClient {
       normalized = normalized.substring(0, normalized.length() - 1);
     }
     return normalized;
+  }
+
+  private String truncate(String value) {
+    if (value == null || value.length() <= 4000) {
+      return value;
+    }
+    return value.substring(0, 4000) + "...";
   }
 }

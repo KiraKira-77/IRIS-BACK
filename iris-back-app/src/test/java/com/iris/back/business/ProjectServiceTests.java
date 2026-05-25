@@ -1587,6 +1587,45 @@ class ProjectServiceTests {
   }
 
   @Test
+  void createWorkOrdersPersistsOmsUserCodeWhenOmsUserIdIsNotNumeric() {
+    mockCurrentUser();
+    BizProjectTaskEntity task = task(7201L, 7001L, "pending");
+    task.setAssigneeId(2001L);
+    task.setAssigneeName("Platform Administrator");
+    when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
+    when(identifierGenerator.nextId(any())).thenReturn(8001L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult(
+            "7512d4fbfff0494d80ff1e6d4d06cfa8",
+            "OMS-20260427-0001",
+            "created",
+            null,
+            "{}"
+        )
+    ));
+
+    projectService.createWorkOrders("7001", "7201", new ProjectWorkOrderCreateRequest(
+        "Finance check",
+        "Please complete the check in OMS",
+        null,
+        List.of(new ProjectWorkOrderCreateRequest.HandlerRequest(
+            "7512d4fbfff0494d80ff1e6d4d06cfa8",
+            "00326891",
+            "张弘"
+        ))
+    ));
+
+    ArgumentCaptor<BizProjectTaskWorkOrderEntity> workOrderCaptor =
+        ArgumentCaptor.forClass(BizProjectTaskWorkOrderEntity.class);
+    verify(projectTaskWorkOrderMapper).insert(workOrderCaptor.capture());
+    assertThat(workOrderCaptor.getValue().getHandlerId()).isEqualTo(326891L);
+    assertThat(workOrderCaptor.getValue().getHandlerEmployeeNo()).isEqualTo("00326891");
+    assertThat(workOrderCaptor.getValue().getHandlerName()).isEqualTo("张弘");
+  }
+
+  @Test
   void createWorkOrdersAllowsAdditionalOrdersForSameHandler() {
     mockCurrentUser();
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");

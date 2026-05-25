@@ -1435,7 +1435,7 @@ public class ProjectService {
       workOrder.setCreatedBy(principal.userId());
     }
     workOrder.setIdempotencyKey(command.idempotencyKey());
-    workOrder.setHandlerId(parseId(command.handlerId(), "PROJECT_WORK_ORDER_HANDLER_ID_INVALID"));
+    workOrder.setHandlerId(handlerRecordId(command));
     workOrder.setHandlerEmployeeNo(command.handlerEmployeeNo());
     workOrder.setHandlerName(command.handlerName());
     workOrder.setWorkOrderTitle(command.title());
@@ -1462,6 +1462,18 @@ public class ProjectService {
       projectTaskWorkOrderMapper.updateById(workOrder);
     }
     return workOrder;
+  }
+
+  private Long handlerRecordId(OmsClient.OmsCreateCommand command) {
+    String handlerId = trimToNull(command.handlerId());
+    if (handlerId != null) {
+      try {
+        return Long.valueOf(handlerId);
+      } catch (NumberFormatException ignored) {
+        // OMS userId can be a UUID-like value; keep the local numeric field stable with employee no.
+      }
+    }
+    return parseId(command.handlerEmployeeNo(), "PROJECT_WORK_ORDER_HANDLER_ID_INVALID");
   }
 
   private BizProjectRectificationEntity createRectification(

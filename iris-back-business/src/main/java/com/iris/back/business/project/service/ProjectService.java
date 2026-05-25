@@ -165,7 +165,9 @@ public class ProjectService {
     BizProjectEntity project = requireProject(parseId(id, "PROJECT_ID_INVALID"), principal.tenantId());
     List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
     ensureCanView(project, members, principal);
-    return toDto(project, members, listTasks(principal.tenantId(), project.getId()));
+    List<BizProjectTaskEntity> tasks = listTasks(principal.tenantId(), project.getId());
+    List<BizProjectTaskWorkOrderEntity> workOrders = listProjectWorkOrders(principal.tenantId(), project.getId());
+    return toDto(project, members, tasks, workOrders);
   }
 
   @Transactional
@@ -1604,10 +1606,22 @@ public class ProjectService {
       List<BizProjectMemberEntity> members,
       List<BizProjectTaskEntity> tasks
   ) {
+    return toDto(project, members, tasks, List.of());
+  }
+
+  private ProjectDto toDto(
+      BizProjectEntity project,
+      List<BizProjectMemberEntity> members,
+      List<BizProjectTaskEntity> tasks,
+      List<BizProjectTaskWorkOrderEntity> workOrders
+  ) {
     int taskCount = tasks.size();
     long passedCount = tasks.stream().filter(task -> "passed".equals(task.getStatus())).count();
     long nonconformingCount = tasks.stream().filter(task -> "nonconforming".equals(task.getStatus())).count();
     int progress = taskCount == 0 ? 0 : (int) ((passedCount + nonconformingCount) * 100 / taskCount);
+    Map<Long, List<BizProjectTaskWorkOrderEntity>> workOrdersByTaskId = nullToList(workOrders)
+        .stream()
+        .collect(Collectors.groupingBy(BizProjectTaskWorkOrderEntity::getTaskId));
     return new ProjectDto(
         String.valueOf(project.getId()),
         project.getProjectCode(),
@@ -1634,7 +1648,10 @@ public class ProjectService {
         (int) nonconformingCount,
         progress,
         members.stream().map(this::toMemberDto).toList(),
-        tasks.stream().map(this::toTaskDto).toList(),
+        tasks.stream().map(task -> toTaskDto(
+            task,
+            workOrdersByTaskId.getOrDefault(task.getId(), List.of())
+        )).toList(),
         List.of("update", "delete", "start"),
         DateTimeFormatters.formatDateTime(project.getCreatedAt()),
         DateTimeFormatters.formatDateTime(project.getUpdatedAt())
@@ -1653,6 +1670,25 @@ public class ProjectService {
   }
 
   private ProjectTaskDto toTaskDto(BizProjectTaskEntity task) {
+    return toTaskDto(task, List.of());
+  }
+
+  private ProjectTaskDto toTaskDto(
+      BizProjectTaskEntity task,
+      List<BizProjectTaskWorkOrderEntity> workOrders
+  ) {
+    List<ProjectTaskWorkOrderDto> workOrderDtos = nullToList(workOrders)
+        .stream()
+        .map(this::toWorkOrderDto)
+        .toList();
+    long passedWorkOrderCount = nullToList(workOrders)
+        .stream()
+        .filter(workOrder -> "passed".equals(workOrder.getIrisReviewStatus()))
+        .count();
+    long nonconformingWorkOrderCount = nullToList(workOrders)
+        .stream()
+        .filter(workOrder -> "rectification_required".equals(workOrder.getIrisReviewStatus()))
+        .count();
     return new ProjectTaskDto(
         String.valueOf(task.getId()),
         String.valueOf(task.getProjectId()),
@@ -1672,10 +1708,10 @@ public class ProjectService {
         task.getStatus(),
         DateTimeFormatters.formatDateTime(task.getIssuedAt()),
         DateTimeFormatters.formatDateTime(task.getCompletedAt()),
-        0,
-        0,
-        0,
-        List.of(),
+        workOrderDtos.size(),
+        (int) passedWorkOrderCount,
+        (int) nonconformingWorkOrderCount,
+        workOrderDtos,
         List.of("assign")
     );
   }

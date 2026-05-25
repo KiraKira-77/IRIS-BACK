@@ -1067,6 +1067,32 @@ class ProjectServiceTests {
   }
 
   @Test
+  void projectDetailIncludesTaskWorkOrdersForContactDisplay() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    BizProjectTaskWorkOrderEntity firstWorkOrder = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
+    BizProjectTaskWorkOrderEntity secondWorkOrder = workOrder(8002L, 7001L, 7201L, "OMS-20260427-0002");
+    secondWorkOrder.setHandlerId(202L);
+    secondWorkOrder.setHandlerEmployeeNo("EMP002");
+    secondWorkOrder.setHandlerName("Handler B");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(7001L, 2001L, "leader")));
+    when(projectTaskMapper.selectList(any())).thenReturn(List.of(task));
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(firstWorkOrder, secondWorkOrder));
+
+    ProjectDto detail = projectService.get("7001");
+
+    assertThat(detail.tasks()).singleElement().satisfies(item -> {
+      assertThat(item.workOrderCount()).isEqualTo(2);
+      assertThat(item.workOrders())
+          .extracting(ProjectTaskWorkOrderDto::handlerName)
+          .containsExactly("Handler A", "Handler B");
+      assertThat(item.contactName()).isNull();
+    });
+  }
+
+  @Test
   void leaderStartsNotStartedProject() {
     mockCurrentUser();
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "not_started"));

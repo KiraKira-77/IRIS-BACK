@@ -9,8 +9,10 @@ public record RectificationCreateRequest(
     String projectName,
     String taskId,
     @NotBlank String assigneeId,
+    @NotBlank String assigneeEmployeeNo,
     @NotBlank String assigneeName,
     String reviewerId,
+    String reviewerEmployeeNo,
     String reviewerName,
     String deadline
 ) {

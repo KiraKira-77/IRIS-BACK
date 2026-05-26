@@ -214,7 +214,7 @@ class ProjectServiceTests {
   }
 
   @Test
-  void reviewWorkOrderRejectsTerminatedOmsWorkOrderStatusCode() {
+  void reviewWorkOrderAcceptsTerminatedOmsWorkOrderStatusCode() {
     mockCurrentUser();
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
@@ -225,17 +225,17 @@ class ProjectServiceTests {
     when(projectMapper.selectById(7001L)).thenReturn(project);
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
     when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(workOrder));
 
-    Assertions.assertThatThrownBy(() -> projectService.reviewWorkOrder(
+    ProjectTaskWorkOrderDto reviewed = projectService.reviewWorkOrder(
         "7001",
         "7201",
         "8001",
-        new ProjectWorkOrderReviewRequest("passed", "Evidence accepted")
-    ))
-        .isInstanceOf(BusinessException.class)
-        .hasMessageContaining("PROJECT_WORK_ORDER_NOT_REVIEWABLE");
+        new ProjectWorkOrderReviewRequest("passed", "Terminated work order accepted")
+    );
 
-    verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    verify(projectTaskWorkOrderMapper).updateById(any(BizProjectTaskWorkOrderEntity.class));
+    assertThat(reviewed.irisReviewStatus()).isEqualTo("passed");
   }
 
   @Test
@@ -308,14 +308,20 @@ class ProjectServiceTests {
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
     task.setAssigneeId(2001L);
     task.setAssigneeName("Platform Administrator");
+    BizProjectMemberEntity taskAssignee = member(7001L, 2001L, "auditor");
+    taskAssignee.setEmployeeNo("AUD001");
     BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
     workOrder.setIrisReviewStatus("rectification_required");
     workOrder.setIrisReviewOpinion("Missing approval record");
     workOrder.setReviewLocked(1);
     when(projectMapper.selectById(7001L)).thenReturn(project);
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(taskAssignee));
     when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
     when(identifierGenerator.nextId(any())).thenReturn(9001L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("201", "OMS-RECT-9001", "created", null, "{}")
+    ));
 
     var created = projectService.createWorkOrderRectification("7001", "7201", "8001");
 
@@ -325,8 +331,28 @@ class ProjectServiceTests {
     verify(projectTaskWorkOrderMapper, never()).updateById(any(BizProjectTaskWorkOrderEntity.class));
     assertThat(created.id()).isEqualTo("9001");
     assertThat(created.sourceWorkOrderRecordId()).isEqualTo("8001");
+    assertThat(created.assigneeId()).isEqualTo("201");
+    assertThat(created.assigneeName()).isEqualTo("Handler A");
+    assertThat(created.reviewerId()).isEqualTo("2001");
+    assertThat(created.reviewerName()).isEqualTo("Platform Administrator");
+    assertThat(created.status()).isEqualTo("in_progress");
+    assertThat(created.rectificationOmsWorkOrderId()).isEqualTo("OMS-RECT-9001");
     assertThat(rectificationCaptor.getValue().getSourceWorkOrderRecordId()).isEqualTo(8001L);
-    assertThat(rectificationCaptor.getValue().getStatus()).isEqualTo("pending");
+    assertThat(rectificationCaptor.getValue().getAssigneeId()).isEqualTo(201L);
+    assertThat(rectificationCaptor.getValue().getAssigneeName()).isEqualTo("Handler A");
+    assertThat(rectificationCaptor.getValue().getContactId()).isEqualTo(2001L);
+    assertThat(rectificationCaptor.getValue().getContactName()).isEqualTo("Platform Administrator");
+    assertThat(rectificationCaptor.getValue().getStatus()).isEqualTo("in_progress");
+    assertThat(rectificationCaptor.getValue().getRectificationOmsWorkOrderId()).isEqualTo("OMS-RECT-9001");
+    ArgumentCaptor<List<OmsClient.OmsCreateCommand>> commandCaptor = ArgumentCaptor.forClass(List.class);
+    verify(omsClient).createWorkOrders(any(), commandCaptor.capture());
+    assertThat(commandCaptor.getValue()).singleElement().satisfies(command -> {
+      assertThat(command.handlerId()).isEqualTo("201");
+      assertThat(command.handlerEmployeeNo()).isEqualTo("EMP001");
+      assertThat(command.requesterEmployeeNo()).isEqualTo("AUD001");
+      assertThat(command.handlerName()).isEqualTo("Handler A");
+      assertThat(command.idempotencyKey()).isEqualTo("rectification:9001");
+    });
   }
 
   @Test
@@ -335,14 +361,20 @@ class ProjectServiceTests {
     BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
     task.setAssigneeId(2001L);
+    BizProjectMemberEntity taskAssignee = member(7001L, 2001L, "auditor");
+    taskAssignee.setEmployeeNo("AUD001");
     BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
     workOrder.setIrisReviewStatus("rectification_required");
     workOrder.setReviewLocked(1);
     when(projectMapper.selectById(7001L)).thenReturn(project);
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(taskAssignee));
     when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
 
     when(identifierGenerator.nextId(any())).thenReturn(9001L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("201", "OMS-RECT-9001", "created", null, "{}")
+    ));
 
     var created = projectService.createWorkOrderRectification("7001", "7201", "8001");
 
@@ -431,6 +463,31 @@ class ProjectServiceTests {
 
     verify(projectTaskWorkOrderMapper).updateById(any(BizProjectTaskWorkOrderEntity.class));
     verify(projectTaskWorkOrderMapper, never()).selectList(any());
+    assertThat(disposed.nonconformityDisposition()).isEqualTo("risk_accepted");
+  }
+
+  @Test
+  void acceptRiskTreatsPendingNonconformityDispositionAsUndisposed() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "in_progress");
+    BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
+    task.setAssigneeId(2001L);
+    BizProjectTaskWorkOrderEntity workOrder = completedOmsWorkOrder(8001L, 7001L, 7201L);
+    workOrder.setIrisReviewStatus("rectification_required");
+    workOrder.setReviewLocked(1);
+    workOrder.setNonconformityDisposition("pending");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectTaskWorkOrderMapper.selectById(8001L)).thenReturn(workOrder);
+
+    ProjectTaskWorkOrderDto disposed = projectService.acceptWorkOrderRisk(
+        "7001",
+        "7201",
+        "8001",
+        new ProjectWorkOrderRiskAcceptRequest("Business accepts the risk")
+    );
+
+    verify(projectTaskWorkOrderMapper).updateById(any(BizProjectTaskWorkOrderEntity.class));
     assertThat(disposed.nonconformityDisposition()).isEqualTo("risk_accepted");
   }
 
@@ -1286,6 +1343,28 @@ class ProjectServiceTests {
   }
 
   @Test
+  void archiveRejectsProjectWithUnfinishedRectifications() {
+    mockCurrentUser();
+    BizProjectEntity project = project(7001L, "PRJ-2026-001", "Finance project", "completed");
+    BizProjectRectificationEntity unfinished = rectification(9001L, 7001L, 7201L, 8001L);
+    unfinished.setStatus("in_progress");
+    when(projectMapper.selectById(7001L)).thenReturn(project);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(7001L, 2001L, "leader")));
+    when(projectTaskMapper.selectList(any())).thenReturn(List.of(task(7201L, 7001L, "passed")));
+    when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
+    when(projectRectificationMapper.selectList(any())).thenReturn(List.of(unfinished));
+
+    Assertions.assertThatThrownBy(() -> projectService.archive("7001"))
+        .isInstanceOf(BusinessException.class)
+        .hasMessageContaining("还有未完成的整改单，项目无法归档。")
+        .extracting("code")
+        .isEqualTo("PROJECT_ARCHIVE_UNFINISHED_RECTIFICATIONS");
+
+    verify(projectArchiveMapper, never()).insert(any(BizProjectArchiveEntity.class));
+    verify(projectMapper, never()).updateById(any(BizProjectEntity.class));
+  }
+
+  @Test
   void deleteOnlyAllowsNotStartedProject() {
     mockCurrentUser();
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
@@ -1375,8 +1454,11 @@ class ProjectServiceTests {
     BizProjectTaskEntity task = task(7201L, 7001L, "pending");
     task.setAssigneeId(3001L);
     task.setAssigneeName("Auditor");
+    BizProjectMemberEntity taskAssignee = member(7001L, 3001L, "auditor");
+    taskAssignee.setEmployeeNo("AUD001");
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(taskAssignee));
     when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
     when(identifierGenerator.nextId(any())).thenReturn(8001L);
     when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
@@ -1465,6 +1547,9 @@ class ProjectServiceTests {
     task.setAssigneeName("Platform Administrator");
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    BizProjectMemberEntity taskAssignee = member(7001L, 2001L, "auditor");
+    taskAssignee.setEmployeeNo("AUD001");
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(taskAssignee));
     when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
     when(identifierGenerator.nextId(any())).thenReturn(8001L);
     when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
@@ -1484,6 +1569,7 @@ class ProjectServiceTests {
     assertThat(commandCaptor.getValue()).singleElement().satisfies(command -> {
       assertThat(command.handlerId()).isEqualTo("201");
       assertThat(command.handlerEmployeeNo()).isEqualTo("EMP001");
+      assertThat(command.requesterEmployeeNo()).isEqualTo("AUD001");
       assertThat(command.idempotencyKey()).isEqualTo("7201:EMP001:8001");
     });
 
@@ -1500,8 +1586,11 @@ class ProjectServiceTests {
     mockCurrentUser();
     BizProjectTaskEntity task = task(7201L, 7001L, "pending");
     task.setAssigneeId(2001L);
+    BizProjectMemberEntity taskAssignee = member(7001L, 2001L, "auditor");
+    taskAssignee.setEmployeeNo("AUD001");
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(taskAssignee));
 
     Assertions.assertThatThrownBy(() -> projectService.createWorkOrders(
         "7001",
@@ -1548,8 +1637,11 @@ class ProjectServiceTests {
     BizProjectTaskEntity task = task(7201L, 7001L, "pending");
     task.setAssigneeId(2001L);
     task.setAssigneeName("Platform Administrator");
+    BizProjectMemberEntity taskAssignee = member(7001L, 2001L, "auditor");
+    taskAssignee.setEmployeeNo("AUD001");
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(taskAssignee));
     when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
     when(identifierGenerator.nextId(any()))
         .thenReturn(8001L)
@@ -1592,8 +1684,11 @@ class ProjectServiceTests {
     BizProjectTaskEntity task = task(7201L, 7001L, "pending");
     task.setAssigneeId(2001L);
     task.setAssigneeName("Platform Administrator");
+    BizProjectMemberEntity taskAssignee = member(7001L, 2001L, "auditor");
+    taskAssignee.setEmployeeNo("AUD001");
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(taskAssignee));
     when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of());
     when(identifierGenerator.nextId(any())).thenReturn(8001L);
     when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
@@ -1631,10 +1726,13 @@ class ProjectServiceTests {
     BizProjectTaskEntity task = task(7201L, 7001L, "in_progress");
     task.setAssigneeId(2001L);
     task.setAssigneeName("Platform Administrator");
+    BizProjectMemberEntity taskAssignee = member(7001L, 2001L, "auditor");
+    taskAssignee.setEmployeeNo("AUD001");
     BizProjectTaskWorkOrderEntity existing = workOrder(8001L, 7001L, 7201L, "OMS-20260427-0001");
     existing.setIdempotencyKey("7201:EMP001:OLD");
     when(projectMapper.selectById(7001L)).thenReturn(project(7001L, "PRJ-2026-001", "Finance project", "in_progress"));
     when(projectTaskMapper.selectById(7201L)).thenReturn(task);
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(taskAssignee));
     when(projectTaskWorkOrderMapper.selectList(any())).thenReturn(List.of(existing));
     when(identifierGenerator.nextId(any()))
         .thenReturn(9001L)
@@ -1887,7 +1985,7 @@ class ProjectServiceTests {
     entity.setRectificationCode("RECT-" + id);
     entity.setTitle("整改项");
     entity.setDescription("整改说明");
-    entity.setStatus("completed");
+    entity.setStatus("approved");
     entity.setReviewResult("passed");
     return entity;
   }

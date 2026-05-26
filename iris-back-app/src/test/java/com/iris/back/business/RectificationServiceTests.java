@@ -156,6 +156,9 @@ class RectificationServiceTests {
     mockCurrentUser();
     when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2001L, "admin", "Platform Administrator", "leader")));
     when(identifierGenerator.nextId(any())).thenReturn(9101L);
+    when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
+        new OmsClient.OmsCreateResult("2002", "OMS-RECT-9101", "created", null, "{}")
+    ));
 
     RectificationDto created = rectificationService.create(new RectificationCreateRequest(
         "Manual issue",
@@ -164,8 +167,10 @@ class RectificationServiceTests {
         "Finance project",
         "7201",
         "2002",
+        "EMP002",
         "Auditor",
         "2003",
+        "EMP003",
         "Reviewer",
         "2026-05-20"
     ));
@@ -175,9 +180,21 @@ class RectificationServiceTests {
     verify(rectificationMapper).insert(captor.capture());
     assertThat(created.id()).isEqualTo("9101");
     assertThat(created.source()).isEqualTo("manual");
-    assertThat(created.status()).isEqualTo("pending");
+    assertThat(created.status()).isEqualTo("in_progress");
+    assertThat(created.rectificationOmsWorkOrderId()).isEqualTo("OMS-RECT-9101");
     assertThat(captor.getValue().getSourceWorkOrderRecordId()).isNull();
+    assertThat(captor.getValue().getRectificationOmsWorkOrderId()).isEqualTo("OMS-RECT-9101");
     assertThat(captor.getValue().getContactId()).isEqualTo(2003L);
+    ArgumentCaptor<List<OmsClient.OmsCreateCommand>> commandCaptor = ArgumentCaptor.forClass(List.class);
+    verify(omsClient).createWorkOrders(any(), commandCaptor.capture());
+    assertThat(commandCaptor.getValue()).singleElement().satisfies(command -> {
+      assertThat(command.handlerId()).isEqualTo("2002");
+      assertThat(command.handlerEmployeeNo()).isEqualTo("EMP002");
+      assertThat(command.requesterEmployeeNo()).isEqualTo("EMP003");
+      assertThat(command.handlerName()).isEqualTo("Auditor");
+      assertThat(command.title()).isEqualTo("Manual issue");
+      assertThat(command.idempotencyKey()).isEqualTo("rectification:9101");
+    });
   }
 
   @Test
@@ -200,7 +217,8 @@ class RectificationServiceTests {
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
     when(projectMemberMapper.selectList(any())).thenReturn(List.of(
         member(2001L, "admin", "Platform Administrator", "leader"),
-        member(2002L, "EMP002", "Auditor", "auditor")
+        member(2002L, "EMP002", "Auditor", "auditor"),
+        member(2003L, "EMP003", "Reviewer", "auditor")
     ));
     when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
         new OmsClient.OmsCreateResult("2002", "OMS-RECT-001", "created", null, "{}")
@@ -224,6 +242,7 @@ class RectificationServiceTests {
     assertThat(commandCaptor.getValue()).singleElement().satisfies(command -> {
       assertThat(command.handlerId()).isEqualTo("2002");
       assertThat(command.handlerEmployeeNo()).isEqualTo("EMP002");
+      assertThat(command.requesterEmployeeNo()).isEqualTo("EMP003");
       assertThat(command.title()).isEqualTo("自定义整改标题");
       assertThat(command.description()).isEqualTo("自定义整改描述");
       assertThat(command.idempotencyKey()).isEqualTo("rectification:9001");
@@ -236,7 +255,10 @@ class RectificationServiceTests {
     mockCurrentUser(2002L, "EMP002", "Auditor");
     BizProjectRectificationEntity entity = rectification(9001L, "pending");
     when(rectificationMapper.selectById(9001L)).thenReturn(entity);
-    when(projectMemberMapper.selectList(any())).thenReturn(List.of(member(2002L, "EMP002", "Auditor", "auditor")));
+    when(projectMemberMapper.selectList(any())).thenReturn(List.of(
+        member(2002L, "EMP002", "Auditor", "auditor"),
+        member(2003L, "EMP003", "Reviewer", "auditor")
+    ));
     when(omsClient.createWorkOrders(any(), any())).thenReturn(List.of(
         new OmsClient.OmsCreateResult("2002", "OMS-RECT-001", "created", null, "{}")
     ));

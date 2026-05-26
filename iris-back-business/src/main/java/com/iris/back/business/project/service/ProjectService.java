@@ -222,6 +222,7 @@ public class ProjectService {
     List<BizProjectTaskEntity> tasks = listTasks(principal.tenantId(), project.getId());
     List<BizProjectTaskWorkOrderEntity> workOrders = listProjectWorkOrders(principal.tenantId(), project.getId());
     List<BizProjectRectificationEntity> rectifications = listProjectRectifications(principal.tenantId(), project.getId());
+    ensureNoUnfinishedRectifications(rectifications);
     syncProjectWorkOrdersBeforeArchive(workOrders, principal);
 
     LocalDateTime archivedAt = LocalDateTime.now();
@@ -276,6 +277,18 @@ public class ProjectService {
       // 归档是最终留痕动作，生成快照前必须主动拉取 OMS 最新详情、状态、日志和附件，确保档案固定的是归档时刻的最新材料。
       syncWorkOrderFromOms(workOrder, principal, omsWorkOrderId);
       projectTaskWorkOrderMapper.updateById(workOrder);
+    }
+  }
+
+  private void ensureNoUnfinishedRectifications(List<BizProjectRectificationEntity> rectifications) {
+    boolean hasUnfinished = nullToList(rectifications).stream()
+        .filter(item -> !Objects.equals(item.getDeleted(), 1))
+        .anyMatch(item -> !"approved".equals(item.getStatus()));
+    if (hasUnfinished) {
+      throw new BusinessException(
+          "PROJECT_ARCHIVE_UNFINISHED_RECTIFICATIONS",
+          "还有未完成的整改单，项目无法归档。"
+      );
     }
   }
 
@@ -385,7 +398,9 @@ public class ProjectService {
     BizProjectEntity project = requireProject(parsedProjectId, principal.tenantId());
     BizProjectTaskEntity task = requireTask(parsedTaskId, parsedProjectId, principal.tenantId());
     ensureProjectInProgress(project);
-    ensureTaskWorkOrderAccess(project, task, principal, listMembers(principal.tenantId(), project.getId()));
+    List<BizProjectMemberEntity> members = listMembers(principal.tenantId(), project.getId());
+    ensureTaskWorkOrderAccess(project, task, principal, members);
+    String requesterEmployeeNo = employeeNoOfTaskAssignee(task, members);
 
     List<ProjectWorkOrderCreateRequest.HandlerRequest> handlers = request.handlers();
     LocalDate issuedDate = parseNullableDate(request.issuedAt(), "PROJECT_WORK_ORDER_ISSUED_AT_INVALID");
@@ -400,6 +415,7 @@ public class ProjectService {
           return new OmsClient.OmsCreateCommand(
               handler.handlerId(),
               handlerEmployeeNo,
+              requesterEmployeeNo,
               handler.handlerName(),
               trimToNull(request.title()) == null ? task.getTaskName() : request.title().trim(),
               trimToNull(request.description()) == null ? task.getTaskDescription() : request.description().trim(),
@@ -542,7 +558,7 @@ public class ProjectService {
     );
     ensureNonconformityCanCreateRectification(workOrder);
 
-    BizProjectRectificationEntity rectification = createRectification(project, task, workOrder, principal);
+    BizProjectRectificationEntity rectification = createRectification(project, task, workOrder, principal, members);
     projectRectificationMapper.insert(rectification);
     recordProjectOperation(
         principal,
@@ -1483,7 +1499,8 @@ public class ProjectService {
       BizProjectEntity project,
       BizProjectTaskEntity task,
       BizProjectTaskWorkOrderEntity workOrder,
-      CurrentUserPrincipal principal
+      CurrentUserPrincipal principal,
+      List<BizProjectMemberEntity> members
   ) {
     Long rectificationId = nextId(new BizProjectRectificationEntity());
     BizProjectRectificationEntity rectification = new BizProjectRectificationEntity();
@@ -1501,10 +1518,10 @@ public class ProjectService {
     rectification.setCheckContent(task.getCheckContent());
     rectification.setSourceWorkOrderRecordId(workOrder.getId());
     rectification.setOmsWorkOrderId(workOrder.getOmsWorkOrderId());
-    rectification.setAssigneeId(task.getAssigneeId());
-    rectification.setAssigneeName(task.getAssigneeName());
-    rectification.setContactId(task.getContactId());
-    rectification.setContactName(task.getContactName());
+    rectification.setAssigneeId(workOrder.getHandlerId());
+    rectification.setAssigneeName(workOrder.getHandlerName());
+    rectification.setContactId(task.getAssigneeId());
+    rectification.setContactName(task.getAssigneeName());
     rectification.setIssuedAt(LocalDateTime.now());
     rectification.setDeadline(LocalDateTime.now().plusDays(7));
     rectification.setStatus("pending");
@@ -1512,7 +1529,72 @@ public class ProjectService {
     rectification.setVersion(0L);
     rectification.setCreatedBy(principal.userId());
     rectification.setUpdatedBy(principal.userId());
+    createRectificationOmsWorkOrder(rectification, workOrder, employeeNoOfTaskAssignee(task, members));
     return rectification;
+  }
+
+  private void createRectificationOmsWorkOrder(
+      BizProjectRectificationEntity rectification,
+      BizProjectTaskWorkOrderEntity sourceWorkOrder,
+      String requesterEmployeeNo
+  ) {
+    String handlerId = sourceWorkOrder.getHandlerId() == null
+        ? sourceWorkOrder.getHandlerEmployeeNo()
+        : String.valueOf(sourceWorkOrder.getHandlerId());
+    OmsClient.OmsCreateCommand command = new OmsClient.OmsCreateCommand(
+        normalizeRequiredText(handlerId, "RECTIFICATION_ASSIGNEE_ID_INVALID"),
+        normalizeRequiredText(sourceWorkOrder.getHandlerEmployeeNo(), "RECTIFICATION_ASSIGNEE_EMPLOYEE_NO_REQUIRED"),
+        normalizeRequiredText(requesterEmployeeNo, "RECTIFICATION_REVIEWER_EMPLOYEE_NO_REQUIRED"),
+        normalizeRequiredText(sourceWorkOrder.getHandlerName(), "RECTIFICATION_ASSIGNEE_NAME_REQUIRED"),
+        rectification.getTitle(),
+        rectification.getDescription(),
+        "rectification:" + rectification.getId(),
+        rectification.getId()
+    );
+    OmsClient.OmsCreateResult result = omsClient.createWorkOrders(toRectificationTaskDto(rectification), List.of(command))
+        .stream()
+        .filter(item -> Objects.equals(item.handlerId(), command.handlerId()))
+        .findFirst()
+        .orElseThrow(() -> new BusinessException("RECTIFICATION_OMS_CREATE_FAILED", "RECTIFICATION_OMS_CREATE_FAILED"));
+    if (trimToNull(result.error()) != null) {
+      throw new BusinessException("RECTIFICATION_OMS_CREATE_FAILED", result.error());
+    }
+    rectification.setRectificationOmsWorkOrderId(normalizeRequiredText(
+        result.omsWorkOrderId(),
+        "RECTIFICATION_OMS_WORK_ORDER_ID_REQUIRED"
+    ));
+    rectification.setRectificationOmsStatus(result.status());
+    rectification.setRectificationOmsStatusName(result.status());
+    rectification.setRectificationWorkOrderCreatedAt(LocalDateTime.now());
+    rectification.setStatus("in_progress");
+  }
+
+  private ProjectTaskDto toRectificationTaskDto(BizProjectRectificationEntity rectification) {
+    return new ProjectTaskDto(
+        rectification.getTaskId() == null ? null : String.valueOf(rectification.getTaskId()),
+        rectification.getProjectId() == null ? null : String.valueOf(rectification.getProjectId()),
+        null,
+        null,
+        rectification.getChecklistItemId() == null ? null : String.valueOf(rectification.getChecklistItemId()),
+        rectification.getCheckContent(),
+        null,
+        null,
+        null,
+        rectification.getTitle(),
+        rectification.getDescription(),
+        rectification.getAssigneeId() == null ? null : String.valueOf(rectification.getAssigneeId()),
+        rectification.getAssigneeName(),
+        rectification.getContactId() == null ? null : String.valueOf(rectification.getContactId()),
+        rectification.getContactName(),
+        rectification.getStatus(),
+        DateTimeFormatters.formatDateTime(rectification.getIssuedAt()),
+        DateTimeFormatters.formatDateTime(rectification.getCompletedAt()),
+        0,
+        0,
+        0,
+        List.of(),
+        List.of()
+    );
   }
 
   private String buildRectificationDescription(
@@ -1529,7 +1611,7 @@ public class ProjectService {
       throw new BusinessException("PROJECT_WORK_ORDER_NOT_NONCONFORMING", "PROJECT_WORK_ORDER_NOT_NONCONFORMING");
     }
     // 整改单已经改为按来源工单一对多创建，旧的 rectificationId 只做历史展示，不能再作为是否已处置的依据。
-    if (trimToNull(workOrder.getNonconformityDisposition()) != null) {
+    if (!isPendingNonconformityDisposition(workOrder.getNonconformityDisposition())) {
       throw new BusinessException(
           "PROJECT_WORK_ORDER_NONCONFORMITY_DISPOSED",
           "该工单已处置，不能重复承担风险"
@@ -1557,6 +1639,14 @@ public class ProjectService {
             .eq(BizProjectRectificationEntity::getTenantId, tenantId)
             .eq(BizProjectRectificationEntity::getSourceWorkOrderRecordId, workOrderId)
     )).isEmpty();
+  }
+
+  private boolean isPendingNonconformityDisposition(String disposition) {
+    String normalized = trimToNull(disposition);
+    return normalized == null
+        || "pending".equals(normalized)
+        || "待处理".equals(normalized)
+        || "待处置".equals(normalized);
   }
 
   private void ensureAllTaskWorkOrdersReviewed(Long projectId, Long taskId, Long tenantId) {
@@ -1827,6 +1917,23 @@ public class ProjectService {
         ));
   }
 
+  private String employeeNoOfTaskAssignee(
+      BizProjectTaskEntity task,
+      List<BizProjectMemberEntity> members
+  ) {
+    Long assigneeId = task.getAssigneeId();
+    return nullToList(members).stream()
+        .filter(member -> Objects.equals(member.getPersonnelId(), assigneeId))
+        .map(BizProjectMemberEntity::getEmployeeNo)
+        .map(this::trimToNull)
+        .filter(Objects::nonNull)
+        .findFirst()
+        .orElseThrow(() -> new BusinessException(
+            "PROJECT_TASK_ASSIGNEE_EMPLOYEE_NO_REQUIRED",
+            "PROJECT_TASK_ASSIGNEE_EMPLOYEE_NO_REQUIRED"
+        ));
+  }
+
   private String handlerEmployeeNo(
       BizProjectTaskWorkOrderEntity workOrder,
       Map<Long, String> employeeNoByPersonnelId
@@ -1861,7 +1968,9 @@ public class ProjectService {
     return isCompletedOmsStatusText(workOrder.getOmsStatusName())
         || isCompletedOmsStatusText(workOrder.getOmsStatus())
         || isArchivedOmsStatusText(workOrder.getOmsStatusName())
-        || isArchivedOmsStatusText(workOrder.getOmsStatus());
+        || isArchivedOmsStatusText(workOrder.getOmsStatus())
+        || isTerminatedOmsStatusText(workOrder.getOmsStatusName())
+        || isTerminatedOmsStatusText(workOrder.getOmsStatus());
   }
 
   private boolean isArchivedOmsStatusText(String status) {
@@ -1872,6 +1981,18 @@ public class ProjectService {
     return "已归档".equals(normalized)
         || "30".equals(normalized)
         || "archived".equalsIgnoreCase(normalized);
+  }
+
+  private boolean isTerminatedOmsStatusText(String status) {
+    String normalized = trimToNull(status);
+    if (normalized == null) {
+      return false;
+    }
+    return "已终止".equals(normalized)
+        || "25".equals(normalized)
+        || "cancelled".equalsIgnoreCase(normalized)
+        || "canceled".equalsIgnoreCase(normalized)
+        || "terminated".equalsIgnoreCase(normalized);
   }
 
   private boolean isCompletedOrArchivedOmsSnapshot(OmsClient.OmsWorkOrderSnapshot snapshot) {

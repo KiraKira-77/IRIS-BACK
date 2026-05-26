@@ -51,6 +51,7 @@ class HttpOmsClientTests {
         List.of(new OmsClient.OmsCreateCommand(
             "201",
             "EMP001",
+            "AUD001",
             "Handler A",
             "Finance check",
             "Handle in OMS",
@@ -65,7 +66,7 @@ class HttpOmsClientTests {
     JsonNode body = objectMapper.readTree(request.body());
     assertThat(body.get("taskName").asText()).isEqualTo("Finance check");
     assertThat(body.get("ownerCode").asText()).isEqualTo("EMP001");
-    assertThat(body.get("checkOwnerCode").asText()).isEqualTo("EMP001");
+    assertThat(body.get("checkOwnerCode").asText()).isEqualTo("AUD001");
     assertThat(body.get("taskDescription").asText()).isEqualTo("Handle in OMS");
     assertThat(body.get("issuedTime").asText()).isEqualTo("2026-05-06");
     assertThat(results.get(0).handlerId()).isEqualTo("201");
@@ -81,6 +82,7 @@ class HttpOmsClientTests {
         List.of(new OmsClient.OmsCreateCommand(
             "201",
             "EMP001",
+            "AUD001",
             "Handler A",
             "OMS_CODE_SUCCESS",
             "Handle in OMS",
@@ -135,7 +137,7 @@ class HttpOmsClientTests {
   void searchUsersCallsQueryUserListAndMapsOmsUserFields() throws Exception {
     List<OmsClient.OmsUser> users = client.searchUsers("张", 1, 20);
 
-    assertThat(requests.get(0).path()).isEqualTo("/je/jolywood-it/itsm/internal-control/queryUserList");
+    assertThat(requests.get(0).path()).isEqualTo("/je/jolywood-it/itsm/internal-control/task/queryUserList");
     JsonNode body = objectMapper.readTree(requests.get(0).body());
     assertThat(body.get("keyword").asText()).isEqualTo("张");
     assertThat(body.get("pageNum").asInt()).isEqualTo(1);
@@ -156,6 +158,7 @@ class HttpOmsClientTests {
         List.of(new OmsClient.OmsCreateCommand(
             "201",
             "EMP001",
+            "AUD001",
             "Handler A",
             "OMS_FAIL",
             "Handle in OMS",
@@ -206,7 +209,7 @@ class HttpOmsClientTests {
       case "/je/jolywood-it/itsm/internal-control/task/back" -> """
           {"success":true,"data":true}
           """;
-      case "/je/jolywood-it/itsm/internal-control/queryUserList" -> """
+      case "/je/jolywood-it/itsm/internal-control/task/queryUserList" -> """
           {"code":"1000","data":{"pageNum":1,"pageSize":20,"list":[{"USER_ID":"7512d4fbfff0494d80ff1e6d4d06cfa8","USER_CODE":"00336276","USER_NAME":"徐家杰"},{"USER_ID":"USER-ZHANG","USER_CODE":"00326891","USER_NAME":"张弘"}]}}
           """;
       default -> throw new IllegalArgumentException("Unexpected path " + path);

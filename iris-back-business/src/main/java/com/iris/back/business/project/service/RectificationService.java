@@ -109,9 +109,17 @@ public class RectificationService {
     entity.setTaskId(parseNullableId(request.taskId(), "RECTIFICATION_TASK_ID_INVALID"));
     entity.setChecklistItemId(0L);
     entity.setSourceWorkOrderRecordId(null);
-    entity.setAssigneeId(parseId(request.assigneeId(), "RECTIFICATION_ASSIGNEE_ID_INVALID"));
+    entity.setAssigneeId(parseFlexiblePersonId(
+        request.assigneeId(),
+        request.assigneeEmployeeNo(),
+        "RECTIFICATION_ASSIGNEE_ID_INVALID"
+    ));
     entity.setAssigneeName(normalizeRequiredText(request.assigneeName(), "RECTIFICATION_ASSIGNEE_NAME_REQUIRED"));
-    entity.setContactId(parseNullableId(request.reviewerId(), "RECTIFICATION_REVIEWER_ID_INVALID"));
+    entity.setContactId(parseFlexiblePersonId(
+        request.reviewerId(),
+        request.reviewerEmployeeNo(),
+        "RECTIFICATION_REVIEWER_ID_INVALID"
+    ));
     entity.setContactName(trimToNull(request.reviewerName()));
     entity.setIssuedAt(LocalDateTime.now());
     entity.setDeadline(parseNullableDeadline(request.deadline()));
@@ -120,6 +128,16 @@ public class RectificationService {
     entity.setVersion(0L);
     entity.setCreatedBy(principal.userId());
     entity.setUpdatedBy(principal.userId());
+    createRectificationOmsWorkOrder(entity, new OmsClient.OmsCreateCommand(
+        normalizeRequiredText(request.assigneeId(), "RECTIFICATION_ASSIGNEE_ID_INVALID"),
+        normalizeRequiredText(request.assigneeEmployeeNo(), "RECTIFICATION_ASSIGNEE_EMPLOYEE_NO_REQUIRED"),
+        normalizeRequiredText(request.reviewerEmployeeNo(), "RECTIFICATION_REVIEWER_EMPLOYEE_NO_REQUIRED"),
+        normalizeRequiredText(request.assigneeName(), "RECTIFICATION_ASSIGNEE_NAME_REQUIRED"),
+        entity.getTitle(),
+        entity.getDescription(),
+        "rectification:" + entity.getId(),
+        entity.getId()
+    ));
     rectificationMapper.insert(entity);
     return toDto(entity);
   }
@@ -149,34 +167,20 @@ public class RectificationService {
     if (trimToNull(entity.getRectificationOmsWorkOrderId()) != null) {
       throw new BusinessException("RECTIFICATION_WORK_ORDER_EXISTS", "RECTIFICATION_WORK_ORDER_EXISTS");
     }
-    BizProjectMemberEntity handler = requireHandlerMember(entity, request, principal.tenantId());
+    List<BizProjectMemberEntity> members = listProjectMembers(principal.tenantId(), entity.getProjectId());
+    BizProjectMemberEntity handler = requireHandlerMember(entity, request, members);
+    String requesterEmployeeNo = employeeNoOfReviewer(entity, members);
     String employeeNo = normalizeRequiredText(handler.getEmployeeNo(), "RECTIFICATION_ASSIGNEE_EMPLOYEE_NO_REQUIRED");
-    OmsClient.OmsCreateCommand command = new OmsClient.OmsCreateCommand(
+    createRectificationOmsWorkOrder(entity, new OmsClient.OmsCreateCommand(
         String.valueOf(handler.getPersonnelId()),
         employeeNo,
+        requesterEmployeeNo,
         normalizeRequiredText(handler.getPersonnelName(), "RECTIFICATION_ASSIGNEE_NAME_REQUIRED"),
         normalizeRequiredText(request.title(), "RECTIFICATION_TITLE_REQUIRED"),
         trimToNull(request.description()),
         "rectification:" + entity.getId(),
         entity.getId()
-    );
-    // 整改 OMS 工单是整改单自己的处理工单，和来源检查 OMS 工单不是同一条业务记录。
-    OmsClient.OmsCreateResult result = omsClient.createWorkOrders(toProjectTaskDto(entity), List.of(command))
-        .stream()
-        .filter(item -> Objects.equals(item.handlerId(), command.handlerId()))
-        .findFirst()
-        .orElseThrow(() -> new BusinessException("RECTIFICATION_OMS_CREATE_FAILED", "RECTIFICATION_OMS_CREATE_FAILED"));
-    if (trimToNull(result.error()) != null) {
-      throw new BusinessException("RECTIFICATION_OMS_CREATE_FAILED", result.error());
-    }
-    entity.setRectificationOmsWorkOrderId(normalizeRequiredText(
-        result.omsWorkOrderId(),
-        "RECTIFICATION_OMS_WORK_ORDER_ID_REQUIRED"
     ));
-    entity.setRectificationOmsStatus(result.status());
-    entity.setRectificationOmsStatusName(result.status());
-    entity.setRectificationWorkOrderCreatedAt(LocalDateTime.now());
-    entity.setStatus("in_progress");
     entity.setUpdatedBy(principal.userId());
     rectificationMapper.updateById(entity);
     return toDto(entity);
@@ -209,6 +213,29 @@ public class RectificationService {
     entity.setUpdatedBy(principal.userId());
     rectificationMapper.updateById(entity);
     return toDto(entity);
+  }
+
+  private void createRectificationOmsWorkOrder(
+      BizProjectRectificationEntity entity,
+      OmsClient.OmsCreateCommand command
+  ) {
+    // 整改 OMS 工单是整改单自己的处理工单，和来源检查 OMS 工单不是同一条业务记录。
+    OmsClient.OmsCreateResult result = omsClient.createWorkOrders(toProjectTaskDto(entity), List.of(command))
+        .stream()
+        .filter(item -> Objects.equals(item.handlerId(), command.handlerId()))
+        .findFirst()
+        .orElseThrow(() -> new BusinessException("RECTIFICATION_OMS_CREATE_FAILED", "RECTIFICATION_OMS_CREATE_FAILED"));
+    if (trimToNull(result.error()) != null) {
+      throw new BusinessException("RECTIFICATION_OMS_CREATE_FAILED", result.error());
+    }
+    entity.setRectificationOmsWorkOrderId(normalizeRequiredText(
+        result.omsWorkOrderId(),
+        "RECTIFICATION_OMS_WORK_ORDER_ID_REQUIRED"
+    ));
+    entity.setRectificationOmsStatus(result.status());
+    entity.setRectificationOmsStatusName(result.status());
+    entity.setRectificationWorkOrderCreatedAt(LocalDateTime.now());
+    entity.setStatus("in_progress");
   }
 
   @Transactional
@@ -412,16 +439,14 @@ public class RectificationService {
   private BizProjectMemberEntity requireHandlerMember(
       BizProjectRectificationEntity entity,
       RectificationWorkOrderCreateRequest request,
-      Long tenantId
+      List<BizProjectMemberEntity> members
   ) {
     Long projectId = entity.getProjectId();
     Long handlerId = parseId(request.handlerId(), "RECTIFICATION_ASSIGNEE_ID_INVALID");
     if (projectId == null) {
       throw new BusinessException("RECTIFICATION_ASSIGNEE_REQUIRED", "RECTIFICATION_ASSIGNEE_REQUIRED");
     }
-    return nullToList(projectMemberMapper.selectList(new LambdaQueryWrapper<BizProjectMemberEntity>()
-        .eq(BizProjectMemberEntity::getTenantId, tenantId)
-        .eq(BizProjectMemberEntity::getProjectId, projectId)))
+    return nullToList(members)
         .stream()
         .filter(member -> Objects.equals(member.getPersonnelId(), handlerId))
         .filter(member -> Objects.equals(
@@ -432,6 +457,23 @@ public class RectificationService {
         .orElseThrow(() -> new BusinessException(
             "RECTIFICATION_ASSIGNEE_MEMBER_NOT_FOUND",
             "RECTIFICATION_ASSIGNEE_MEMBER_NOT_FOUND"
+        ));
+  }
+
+  private String employeeNoOfReviewer(
+      BizProjectRectificationEntity entity,
+      List<BizProjectMemberEntity> members
+  ) {
+    Long reviewerId = entity.getContactId();
+    return nullToList(members).stream()
+        .filter(member -> Objects.equals(member.getPersonnelId(), reviewerId))
+        .map(BizProjectMemberEntity::getEmployeeNo)
+        .map(this::trimToNull)
+        .filter(Objects::nonNull)
+        .findFirst()
+        .orElseThrow(() -> new BusinessException(
+            "RECTIFICATION_REVIEWER_EMPLOYEE_NO_REQUIRED",
+            "RECTIFICATION_REVIEWER_EMPLOYEE_NO_REQUIRED"
         ));
   }
 
@@ -552,6 +594,26 @@ public class RectificationService {
   private Long parseNullableId(String id, String code) {
     String normalized = trimToNull(id);
     return normalized == null ? null : parseId(normalized, code);
+  }
+
+  private Long parseFlexiblePersonId(String id, String employeeNo, String code) {
+    String normalizedId = trimToNull(id);
+    if (normalizedId != null) {
+      try {
+        return Long.valueOf(normalizedId);
+      } catch (NumberFormatException ignored) {
+        // OMS userId may be non-numeric; store numeric employee no when available.
+      }
+    }
+    String normalizedEmployeeNo = trimToNull(employeeNo);
+    if (normalizedEmployeeNo != null) {
+      try {
+        return Long.valueOf(normalizedEmployeeNo);
+      } catch (NumberFormatException ignored) {
+        return null;
+      }
+    }
+    throw new BusinessException(code, code);
   }
 
   private String normalizeRequiredText(String value, String code) {

@@ -59,11 +59,11 @@ public class HttpOmsClient implements OmsClient {
   public List<OmsCreateResult> createWorkOrders(ProjectTaskDto task, List<OmsCreateCommand> commands) {
     List<OmsCreateResult> results = new ArrayList<>();
     for (OmsCreateCommand command : commands) {
-      // OMS 当前用员工工号识别处理人，ownerCode 和 checkOwnerCode 都传同一个 handlerEmployeeNo。
+      // OMS 用员工工号识别工单负责人和申请人/需求来源人。
       Map<String, Object> payload = new LinkedHashMap<>();
       payload.put("taskName", nonBlank(command.title(), task.taskName(), "IRIS internal control task"));
       payload.put("ownerCode", command.handlerEmployeeNo());
-      payload.put("checkOwnerCode", command.handlerEmployeeNo());
+      payload.put("checkOwnerCode", command.requesterEmployeeNo());
       payload.put("taskDescription", nonBlank(command.description(), task.taskDescription(), null));
       payload.put("issuedTime", issuedDate(task.issuedAt()));
 
